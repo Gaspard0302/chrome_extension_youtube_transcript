@@ -1,0 +1,66 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Transcript Search",
+  "version": "0.1.0",
+  "description": "Search and chat with YouTube transcripts using AI",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://*.youtube.com/*",
+    "https://api.anthropic.com/*",
+    "https://api.openai.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.mistral.ai/*",
+    "https://api.groq.com/*"
+  ],
+  "background": {
+    "service_worker": "service-worker-loader.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "js": [
+        "assets/index.tsx-loader-B2dEDdLK.js"
+      ],
+      "matches": [
+        "https://www.youtube.com/watch*"
+      ],
+      "run_at": "document_idle",
+      "css": [
+        "assets/content-Dga70TEn.css"
+      ]
+    }
+  ],
+  "action": {
+    "default_popup": "src/popup/index.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "resources": [
+        "assets/*",
+        "assets/ort-wasm-simd-threaded.jsep-B0T3yYHD.wasm",
+        "assets/content-IBObJqNz.js",
+        "assets/preload-helper-D7HrI6pR.js",
+        "assets/providers-D_NaGG7O.js",
+        "assets/transformers.web-DFIKh8Jl.js",
+        "assets/index.tsx-EydaJmXI.js"
+      ],
+      "use_dynamic_url": false
+    }
+  ]
+}

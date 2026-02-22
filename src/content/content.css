@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+#yt-transcript-root {
+  all: initial;
+  font-family: "Roboto", "Arial", sans-serif;
+}
+
+#yt-transcript-root * {
+  box-sizing: border-box;
+}
+
+#yt-transcript-root mark {
+  background-color: #fbbf24;
+  color: #0f0f0f;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+#yt-transcript-root .scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+
+#yt-transcript-root .scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#yt-transcript-root .scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #3f3f3f;
+  border-radius: 2px;
+}

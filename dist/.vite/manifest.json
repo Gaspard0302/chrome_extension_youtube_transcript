@@ -1,0 +1,154 @@
+{
+  "../../../../../@crx/manifest": {
+    "file": "assets/crx-manifest.js-BO7doYyW.js",
+    "name": "crx-manifest.js",
+    "src": "../../../../../@crx/manifest",
+    "isEntry": true
+  },
+  "_content-!~{003}~.js": {
+    "file": "assets/content-Dga70TEn.css",
+    "src": "_content-!~{003}~.js"
+  },
+  "_content-IBObJqNz.js": {
+    "file": "assets/content-IBObJqNz.js",
+    "name": "content",
+    "css": [
+      "assets/content-Dga70TEn.css"
+    ]
+  },
+  "_preload-helper-D7HrI6pR.js": {
+    "file": "assets/preload-helper-D7HrI6pR.js",
+    "name": "preload-helper"
+  },
+  "_providers-D_NaGG7O.js": {
+    "file": "assets/providers-D_NaGG7O.js",
+    "name": "providers"
+  },
+  "_types-B0luv8fm.js": {
+    "file": "assets/types-B0luv8fm.js",
+    "name": "types"
+  },
+  "index.tsx-loader.js": {
+    "file": "assets/index.tsx-loader-B2dEDdLK.js",
+    "src": "index.tsx-loader.js"
+  },
+  "node_modules/@ai-sdk/anthropic/dist/index.mjs": {
+    "file": "assets/index-CnjmXom8.js",
+    "name": "index",
+    "src": "node_modules/@ai-sdk/anthropic/dist/index.mjs",
+    "isDynamicEntry": true,
+    "imports": [
+      "_types-B0luv8fm.js"
+    ]
+  },
+  "node_modules/@ai-sdk/google/dist/index.mjs": {
+    "file": "assets/index-DDviwPPI.js",
+    "name": "index",
+    "src": "node_modules/@ai-sdk/google/dist/index.mjs",
+    "isDynamicEntry": true,
+    "imports": [
+      "_types-B0luv8fm.js"
+    ]
+  },
+  "node_modules/@ai-sdk/groq/dist/index.mjs": {
+    "file": "assets/index-DsxTHHhL.js",
+    "name": "index",
+    "src": "node_modules/@ai-sdk/groq/dist/index.mjs",
+    "isDynamicEntry": true,
+    "imports": [
+      "_types-B0luv8fm.js"
+    ]
+  },
+  "node_modules/@ai-sdk/mistral/dist/index.mjs": {
+    "file": "assets/index-BAOKEl7B.js",
+    "name": "index",
+    "src": "node_modules/@ai-sdk/mistral/dist/index.mjs",
+    "isDynamicEntry": true,
+    "imports": [
+      "_types-B0luv8fm.js"
+    ]
+  },
+  "node_modules/@ai-sdk/openai/dist/index.mjs": {
+    "file": "assets/index-CJOPnOUA.js",
+    "name": "index",
+    "src": "node_modules/@ai-sdk/openai/dist/index.mjs",
+    "isDynamicEntry": true,
+    "imports": [
+      "_types-B0luv8fm.js"
+    ]
+  },
+  "node_modules/@huggingface/transformers/dist/transformers.web.js": {
+    "file": "assets/transformers.web-DFIKh8Jl.js",
+    "name": "transformers.web",
+    "src": "node_modules/@huggingface/transformers/dist/transformers.web.js",
+    "isDynamicEntry": true,
+    "assets": [
+      "assets/ort-wasm-simd-threaded.jsep-B0T3yYHD.wasm"
+    ]
+  },
+  "node_modules/ai/dist/index.mjs": {
+    "file": "assets/index-8Gn8JPIE.js",
+    "name": "index",
+    "src": "node_modules/ai/dist/index.mjs",
+    "isDynamicEntry": true,
+    "imports": [
+      "_types-B0luv8fm.js"
+    ]
+  },
+  "node_modules/ollama-ai-provider/dist/index.mjs": {
+    "file": "assets/index-DI8bcMTT.js",
+    "name": "index",
+    "src": "node_modules/ollama-ai-provider/dist/index.mjs",
+    "isDynamicEntry": true,
+    "imports": [
+      "_types-B0luv8fm.js"
+    ]
+  },
+  "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm": {
+    "file": "assets/ort-wasm-simd-threaded.jsep-B0T3yYHD.wasm",
+    "src": "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm"
+  },
+  "src/background/index.ts": {
+    "file": "assets/index.ts-BTpjBjIW.js",
+    "name": "index.ts",
+    "src": "src/background/index.ts",
+    "isEntry": true,
+    "imports": [
+      "_preload-helper-D7HrI6pR.js",
+      "_providers-D_NaGG7O.js"
+    ],
+    "dynamicImports": [
+      "node_modules/ai/dist/index.mjs",
+      "node_modules/@ai-sdk/anthropic/dist/index.mjs",
+      "node_modules/@ai-sdk/openai/dist/index.mjs",
+      "node_modules/@ai-sdk/google/dist/index.mjs",
+      "node_modules/@ai-sdk/groq/dist/index.mjs",
+      "node_modules/@ai-sdk/mistral/dist/index.mjs",
+      "node_modules/ollama-ai-provider/dist/index.mjs"
+    ]
+  },
+  "src/content/index.tsx": {
+    "file": "assets/index.tsx-EydaJmXI.js",
+    "name": "index.tsx",
+    "src": "src/content/index.tsx",
+    "isEntry": true,
+    "imports": [
+      "_content-IBObJqNz.js",
+      "_preload-helper-D7HrI6pR.js",
+      "_providers-D_NaGG7O.js"
+    ],
+    "dynamicImports": [
+      "node_modules/@huggingface/transformers/dist/transformers.web.js"
+    ]
+  },
+  "src/popup/index.html": {
+    "file": "assets/popup-CXGxfCmr.js",
+    "name": "popup",
+    "src": "src/popup/index.html",
+    "isEntry": true,
+    "imports": [
+      "_content-IBObJqNz.js",
+      "_providers-D_NaGG7O.js"
+    ]
+  }
+}
