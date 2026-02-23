@@ -5,8 +5,12 @@
   "description": "Search and chat with YouTube transcripts using AI",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "offscreen"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
   "host_permissions": [
     "https://*.youtube.com/*",
     "https://api.anthropic.com/*",

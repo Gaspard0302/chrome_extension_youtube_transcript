@@ -1,13 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
 import { extractVideoId, fetchTranscript, chunkTranscript } from "../../lib/transcript";
+import type { FetchDiagnostics } from "../../lib/transcript";
 import { embedSegments } from "../../lib/embeddings";
 import type { EmbeddedSegment, Settings, TranscriptSegment } from "../../types";
 import { DEFAULT_SETTINGS } from "../../lib/providers";
 import SearchTab from "./SearchTab";
 import ChatTab from "./ChatTab";
 import TranscriptTab from "./TranscriptTab";
+import DetailsTab from "./DetailsTab";
 
-type Tab = "search" | "chat" | "transcript";
+type Tab = "search" | "chat" | "transcript" | "details";
 type LoadState = "idle" | "fetching" | "embedding" | "ready" | "error";
 
 export default function Panel() {
@@ -16,6 +18,8 @@ export default function Panel() {
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [loadProgress, setLoadProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
+  const [errorDetails, setErrorDetails] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<FetchDiagnostics | null>(null);
 
   const [rawSegments, setRawSegments] = useState<TranscriptSegment[]>([]);
   const [embeddedSegments, setEmbeddedSegments] = useState<EmbeddedSegment[]>([]);
@@ -47,7 +51,11 @@ export default function Panel() {
   async function loadTranscript(videoId: string) {
     try {
       setLoadState("fetching");
-      const segments = await fetchTranscript(videoId);
+      setErrorDetails(null);
+      setDiagnostics(null);
+
+      const { segments, diagnostics: diag } = await fetchTranscript(videoId);
+      setDiagnostics(diag);
       const chunks = chunkTranscript(segments);
       setRawSegments(chunks);
 
@@ -61,7 +69,10 @@ export default function Panel() {
 
       setLoadState("ready");
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Failed to load transcript.");
+      setErrorMsg("Failed to load transcript.");
+      setErrorDetails(err instanceof Error ? err.stack || err.message : String(err));
+      const diagFromErr = (err as { diagnostics?: FetchDiagnostics }).diagnostics;
+      if (diagFromErr) setDiagnostics(diagFromErr);
       setLoadState("error");
     }
   }
@@ -70,6 +81,7 @@ export default function Panel() {
     { id: "search", label: "Search" },
     { id: "chat", label: "Chat" },
     { id: "transcript", label: "Transcript" },
+    { id: "details", label: "Details" },
   ];
 
   return (
@@ -202,8 +214,11 @@ export default function Panel() {
         {/* Body */}
         <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
           {loadState === "error" && (
-            <div style={{ padding: 16, color: "#f87171", fontSize: 13 }}>
-              {errorMsg}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+              <div style={{ padding: 16, color: "#f87171", fontSize: 13, borderBottom: "1px solid #3F3F3F" }}>
+                {errorMsg} Check the <strong>Details</strong> tab for more information.
+              </div>
+              {tab === "details" && <DetailsTab segments={rawSegments} errorDetails={errorDetails} diagnostics={diagnostics} />}
             </div>
           )}
 
@@ -249,6 +264,9 @@ export default function Panel() {
               )}
               {tab === "transcript" && (
                 <TranscriptTab segments={rawSegments} />
+              )}
+              {tab === "details" && (
+                <DetailsTab segments={rawSegments} errorDetails={errorDetails} diagnostics={diagnostics} />
               )}
             </>
           )}

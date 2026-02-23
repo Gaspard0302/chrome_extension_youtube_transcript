@@ -12,6 +12,16 @@ export default defineConfig({
     rollupOptions: {
       input: {
         popup: "src/popup/index.html",
+        offscreen: "src/offscreen/index.html",
+      },
+      output: {
+        // Emit WASM files at the extension root without a hash so that
+        // ort-wasm-simd-threaded.jsep.mjs (loaded from the root) can find
+        // ort-wasm-simd-threaded.jsep.wasm via import.meta.url.
+        assetFileNames: (info) =>
+          info.name?.endsWith(".wasm")
+            ? "[name][extname]"
+            : "assets/[name]-[hash][extname]",
       },
     },
   },

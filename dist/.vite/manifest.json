@@ -1,24 +1,24 @@
 {
   "../../../../../@crx/manifest": {
-    "file": "assets/crx-manifest.js-BO7doYyW.js",
+    "file": "assets/crx-manifest.js-CqHlKvam.js",
     "name": "crx-manifest.js",
     "src": "../../../../../@crx/manifest",
     "isEntry": true
   },
-  "_content-!~{003}~.js": {
-    "file": "assets/content-Dga70TEn.css",
-    "src": "_content-!~{003}~.js"
+  "_content-!~{005}~.js": {
+    "file": "assets/content-Bm3Uu7xa.css",
+    "src": "_content-!~{005}~.js"
   },
-  "_content-IBObJqNz.js": {
-    "file": "assets/content-IBObJqNz.js",
+  "_content-DmZOpr4u.js": {
+    "file": "assets/content-DmZOpr4u.js",
     "name": "content",
     "css": [
-      "assets/content-Dga70TEn.css"
+      "assets/content-Bm3Uu7xa.css"
     ]
   },
-  "_preload-helper-D7HrI6pR.js": {
-    "file": "assets/preload-helper-D7HrI6pR.js",
-    "name": "preload-helper"
+  "_modulepreload-polyfill-B5Qt9EMX.js": {
+    "file": "assets/modulepreload-polyfill-B5Qt9EMX.js",
+    "name": "modulepreload-polyfill"
   },
   "_providers-D_NaGG7O.js": {
     "file": "assets/providers-D_NaGG7O.js",
@@ -29,7 +29,7 @@
     "name": "types"
   },
   "index.tsx-loader.js": {
-    "file": "assets/index.tsx-loader-B2dEDdLK.js",
+    "file": "assets/index.tsx-loader-CDk1TVXS.js",
     "src": "index.tsx-loader.js"
   },
   "node_modules/@ai-sdk/anthropic/dist/index.mjs": {
@@ -77,15 +77,6 @@
       "_types-B0luv8fm.js"
     ]
   },
-  "node_modules/@huggingface/transformers/dist/transformers.web.js": {
-    "file": "assets/transformers.web-DFIKh8Jl.js",
-    "name": "transformers.web",
-    "src": "node_modules/@huggingface/transformers/dist/transformers.web.js",
-    "isDynamicEntry": true,
-    "assets": [
-      "assets/ort-wasm-simd-threaded.jsep-B0T3yYHD.wasm"
-    ]
-  },
   "node_modules/ai/dist/index.mjs": {
     "file": "assets/index-8Gn8JPIE.js",
     "name": "index",
@@ -105,16 +96,15 @@
     ]
   },
   "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm": {
-    "file": "assets/ort-wasm-simd-threaded.jsep-B0T3yYHD.wasm",
+    "file": "ort-wasm-simd-threaded.jsep.wasm",
     "src": "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm"
   },
   "src/background/index.ts": {
-    "file": "assets/index.ts-BTpjBjIW.js",
+    "file": "assets/index.ts-CEUWy5da.js",
     "name": "index.ts",
     "src": "src/background/index.ts",
     "isEntry": true,
     "imports": [
-      "_preload-helper-D7HrI6pR.js",
       "_providers-D_NaGG7O.js"
     ],
     "dynamicImports": [
@@ -128,26 +118,35 @@
     ]
   },
   "src/content/index.tsx": {
-    "file": "assets/index.tsx-EydaJmXI.js",
+    "file": "assets/index.tsx-BGFcKHEd.js",
     "name": "index.tsx",
     "src": "src/content/index.tsx",
     "isEntry": true,
     "imports": [
-      "_content-IBObJqNz.js",
-      "_preload-helper-D7HrI6pR.js",
+      "_content-DmZOpr4u.js",
       "_providers-D_NaGG7O.js"
+    ]
+  },
+  "src/offscreen/index.html": {
+    "file": "assets/offscreen-C65oEfZj.js",
+    "name": "offscreen",
+    "src": "src/offscreen/index.html",
+    "isEntry": true,
+    "imports": [
+      "_modulepreload-polyfill-B5Qt9EMX.js"
     ],
-    "dynamicImports": [
-      "node_modules/@huggingface/transformers/dist/transformers.web.js"
+    "assets": [
+      "ort-wasm-simd-threaded.jsep.wasm"
     ]
   },
   "src/popup/index.html": {
-    "file": "assets/popup-CXGxfCmr.js",
+    "file": "assets/popup-Rww6d697.js",
     "name": "popup",
     "src": "src/popup/index.html",
     "isEntry": true,
     "imports": [
-      "_content-IBObJqNz.js",
+      "_modulepreload-polyfill-B5Qt9EMX.js",
+      "_content-DmZOpr4u.js",
       "_providers-D_NaGG7O.js"
     ]
   }
