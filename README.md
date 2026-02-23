@@ -2,7 +2,6 @@
 
 A Chrome extension that adds a **Transcript & AI** panel directly inside YouTube's native UI — no popups, no overlays. Search transcripts, follow along in real time, and chat with any AI provider about the video.
 
-![Screenshot](media/screenshot1.png)
 
 ---
 
@@ -19,7 +18,7 @@ A Chrome extension that adds a **Transcript & AI** panel directly inside YouTube
 | | |
 |---|---|
 | ![](media/screenshot2.png) | ![](media/screenshot3.png) |
-| ![](media/screenshot4.png) | |
+| ![](media/screenshot4.png) | ![](media/screenshot1.png)|
 
 ---
 
