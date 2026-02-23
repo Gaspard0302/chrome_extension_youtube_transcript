@@ -70,11 +70,21 @@ export async function hybridSearch(
   return results;
 }
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 /**
  * Highlights occurrences of `query` in `text` with <mark> tags.
+ * HTML-escapes both text and query before injection to prevent XSS.
  */
 export function highlightText(text: string, query: string): string {
-  if (!query.trim()) return text;
-  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return text.replace(new RegExp(`(${escaped})`, "gi"), "<mark>$1</mark>");
+  const safe = escapeHtml(text);
+  if (!query.trim()) return safe;
+  const escapedQuery = escapeHtml(query).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return safe.replace(new RegExp(`(${escapedQuery})`, "gi"), "<mark>$1</mark>");
 }

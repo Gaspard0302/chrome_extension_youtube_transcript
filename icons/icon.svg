@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#18181b"/>
+      <stop offset="100%" stop-color="#09090b"/>
+    </linearGradient>
+    <linearGradient id="screenGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.97"/>
+      <stop offset="100%" stop-color="#e4e4e7" stop-opacity="0.97"/>
+    </linearGradient>
+    <linearGradient id="lineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.15"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect width="128" height="128" rx="24" fill="url(#bg)"/>
+
+  <!-- Subtle inner vignette rim -->
+  <rect width="128" height="128" rx="24" fill="none" stroke="#ffffff" stroke-width="1" stroke-opacity="0.06"/>
+
+  <!-- Video screen (white card) -->
+  <rect x="13" y="13" width="102" height="63" rx="9" fill="url(#screenGrad)"/>
+
+  <!-- Red play button — centered in screen (vertical center = 44.5) -->
+  <!-- Triangle: left edge x=42, right tip x=89, vertical range 28–61 -->
+  <polygon points="43,27 43,63 89,45" fill="#dc2626" filter="url(#glow)"/>
+  <!-- Subtle inner highlight on play -->
+  <polygon points="43,27 43,45 68,36" fill="#ff3333" opacity="0.45"/>
+
+  <!-- Transcript lines (below the screen) -->
+  <!-- Line 1: full width -->
+  <rect x="13" y="85" width="102" height="9" rx="4.5" fill="url(#lineGrad)"/>
+  <!-- Line 2: 75% width -->
+  <rect x="13" y="101" width="76" height="9" rx="4.5" fill="url(#lineGrad)" opacity="0.7"/>
+  <!-- Line 3: 50% width -->
+  <rect x="13" y="117" width="50" height="7" rx="3.5" fill="url(#lineGrad)" opacity="0.4"/>
+
+  <!-- Small AI sparkle — top-right corner of screen -->
+  <g transform="translate(103.5, 16.5)" filter="url(#glow)">
+    <!-- 4-point star -->
+    <path d="M0,-5.5 L1.3,-1.3 L5.5,0 L1.3,1.3 L0,5.5 L-1.3,1.3 L-5.5,0 L-1.3,-1.3 Z"
+          fill="#fbbf24" opacity="0.95"/>
+  </g>
+</svg>

@@ -62,10 +62,18 @@ function parseInline(
       );
     }
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
-      return <strong key={key}>{part.slice(2, -2)}</strong>;
+      return (
+        <strong key={key}>
+          {parseInline(part.slice(2, -2), jumpTo, `${key}-b`)}
+        </strong>
+      );
     }
     if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
-      return <em key={key}>{part.slice(1, -1)}</em>;
+      return (
+        <em key={key}>
+          {parseInline(part.slice(1, -1), jumpTo, `${key}-i`)}
+        </em>
+      );
     }
     if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
       return (
@@ -285,9 +293,6 @@ export default function ChatTab({
     (p) => !p.requiresKey || (settings.apiKeys[p.id] ?? "").length > 0
   );
   const hasAnyProvider = availableProviders.length > 0;
-  const effectiveProvider =
-    availableProviders.find((p) => p.id === settings.selectedProvider) ??
-    availableProviders[0] ?? null;
 
   const provider = PROVIDERS.find((p) => p.id === settings.selectedProvider);
   const apiKey = settings.apiKeys[settings.selectedProvider] ?? "";
@@ -461,102 +466,66 @@ Guidelines:
         overflow: "hidden",
       }}
     >
-      {/* Provider/model selector bar */}
-      <div
-        style={{
-          padding: "8px 12px",
-          borderBottom:
-            "1px solid var(--yt-spec-10-percent-layer, rgba(255,255,255,0.1))",
-          display: "flex",
-          gap: 6,
-          alignItems: "center",
-          flexShrink: 0,
-        }}
-      >
-        {!hasAnyProvider ? (
-          <span style={{ fontSize: 12, color: "#fbbf24" }}>
-            No API provider configured. Add an API key in the extension
-            settings.
-          </span>
-        ) : (
-          <>
-            <select
-              value={effectiveProvider?.id ?? ""}
-              onChange={(e) => {
-                const p = availableProviders.find(
-                  (pr) => pr.id === e.target.value
-                )!;
-                onSettingsChange({
-                  ...settings,
-                  selectedProvider: p.id,
-                  selectedModel: p.models[0].id,
-                });
+      {/* Top bar: warning or clear button only */}
+      {(!hasAnyProvider || messages.length > 0) && (
+        <div
+          style={{
+            padding: "8px 12px",
+            borderBottom:
+              "1px solid var(--yt-spec-10-percent-layer, rgba(255,255,255,0.1))",
+            display: "flex",
+            alignItems: "center",
+            flexShrink: 0,
+          }}
+        >
+          {!hasAnyProvider ? (
+            <span style={{ fontSize: 12, color: "#fbbf24" }}>
+              No API provider configured. Add an API key in the extension
+              settings.
+            </span>
+          ) : (
+            <div style={{ flex: 1 }} />
+          )}
+          {messages.length > 0 && (
+            <button
+              type="button"
+              onClick={clearChat}
+              title="Clear chat history"
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "var(--yt-spec-text-secondary, #aaa)",
+                cursor: "pointer",
+                padding: 4,
+                borderRadius: 4,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+                transition: "color 0.15s",
               }}
-              style={selectStyle}
-            >
-              {availableProviders.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-            <select
-              value={settings.selectedModel}
-              onChange={(e) =>
-                onSettingsChange({
-                  ...settings,
-                  selectedModel: e.target.value,
-                })
+              onMouseEnter={(e) =>
+                ((e.currentTarget as HTMLButtonElement).style.color =
+                  "var(--yt-spec-text-primary, #f1f1f1)")
               }
-              style={selectStyle}
+              onMouseLeave={(e) =>
+                ((e.currentTarget as HTMLButtonElement).style.color =
+                  "var(--yt-spec-text-secondary, #aaa)")
+              }
             >
-              {(effectiveProvider?.models ?? []).map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
-        {messages.length > 0 && (
-          <button
-            type="button"
-            onClick={clearChat}
-            title="Clear chat history"
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "var(--yt-spec-text-secondary, #aaa)",
-              cursor: "pointer",
-              padding: 4,
-              borderRadius: 4,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
-              transition: "color 0.15s",
-            }}
-            onMouseEnter={(e) =>
-              ((e.currentTarget as HTMLButtonElement).style.color =
-                "var(--yt-spec-text-primary, #f1f1f1)")
-            }
-            onMouseLeave={(e) =>
-              ((e.currentTarget as HTMLButtonElement).style.color =
-                "var(--yt-spec-text-secondary, #aaa)")
-            }
-          >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              aria-hidden="true"
-            >
-              <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-            </svg>
-          </button>
-        )}
-      </div>
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+              </svg>
+            </button>
+          )}
+        </div>
+      )}
 
       {!hasKey && (
         <div
@@ -773,16 +742,3 @@ Guidelines:
   );
 }
 
-const selectStyle: React.CSSProperties = {
-  background: "var(--yt-spec-general-background-a, rgba(0,0,0,0.4))",
-  border:
-    "1px solid var(--yt-spec-10-percent-layer, rgba(255,255,255,0.15))",
-  borderRadius: 16,
-  color: "var(--yt-spec-text-primary, #f1f1f1)",
-  padding: "5px 10px",
-  fontSize: 12,
-  cursor: "pointer",
-  flex: 1,
-  outline: "none",
-  fontFamily: "'Roboto', 'Arial', sans-serif",
-};

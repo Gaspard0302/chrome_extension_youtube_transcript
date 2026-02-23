@@ -68,9 +68,6 @@ function SettingsApp() {
     });
   }
 
-  const providerModels =
-    PROVIDERS.find((p) => p.id === settings.selectedProvider)?.models ?? [];
-
   return (
     <div
       style={{
@@ -104,7 +101,7 @@ function SettingsApp() {
             flexShrink: 0,
           }}
         />
-        <span style={{ fontWeight: 700, fontSize: 16 }}>Transcript & AI</span>
+        <span style={{ fontWeight: 700, fontSize: 16 }}>TranscriptAI</span>
       </div>
 
       {/* API Keys — chip-style section */}
@@ -215,7 +212,7 @@ function SettingsApp() {
         />
       </section>
 
-      {/* Default provider & model — chip-style selects */}
+      {/* Model selection */}
       <section
         style={{
           marginBottom: 20,
@@ -233,7 +230,7 @@ function SettingsApp() {
             letterSpacing: "0.05em",
           }}
         >
-          AI Chat defaults
+          AI Model
         </h2>
         <label
           style={{
@@ -253,7 +250,7 @@ function SettingsApp() {
             setSettings((prev) => ({
               ...prev,
               selectedProvider: p.id,
-              selectedModel: "", // No default model; user must choose
+              selectedModel: p.models[0].id,
             }));
           }}
           style={{
@@ -307,20 +304,22 @@ function SettingsApp() {
             boxSizing: "border-box",
           }}
         >
-          <option value="">Select a model</option>
-          {providerModels.map((m) => (
+          {(PROVIDERS.find((p) => p.id === settings.selectedProvider)?.models ?? []).map((m) => (
             <option key={m.id} value={m.id}>
               {m.label}
             </option>
           ))}
         </select>
+      </section>
+
+      {/* Semantic search toggle */}
+      <section style={{ marginBottom: 20 }}>
         <label
           style={{
             display: "flex",
             alignItems: "center",
             gap: 10,
             cursor: "pointer",
-            marginTop: 12,
           }}
         >
           <input

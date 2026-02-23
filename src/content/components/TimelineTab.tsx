@@ -1,46 +1,209 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { Settings, TranscriptSegment } from "../../types";
+import type { EmbeddedSegment, Settings } from "../../types";
 import { PROVIDERS } from "../../lib/providers";
 import { formatTimestamp } from "../../lib/transcript";
+
+// ---------------------------------------------------------------------------
+// Segmentation helpers
+// ---------------------------------------------------------------------------
+
+const MIN_SECS = 90;   // 1.5 min — never split more finely than this
+const TARGET_SECS = 150; // 2.5 min target per block
+const MAX_BLOCKS = 25;
+const WINDOW = 3;      // segments to average on each side of a candidate boundary
+
+function dot(a: number[], b: number[]): number {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+  return s;
+}
+
+function cosine(a: number[], b: number[]): number {
+  const d = Math.sqrt(dot(a, a)) * Math.sqrt(dot(b, b));
+  return d === 0 ? 1 : Math.max(-1, Math.min(1, dot(a, b) / d));
+}
+
+function avgVec(vecs: number[][]): number[] {
+  if (!vecs.length || !vecs[0].length) return [];
+  const dim = vecs[0].length;
+  const out = new Array<number>(dim).fill(0);
+  for (const v of vecs) for (let i = 0; i < dim; i++) out[i] += v[i];
+  return out.map((x) => x / vecs.length);
+}
 
 interface TimelineBlock {
   startTime: number;
   endTime: number;
   title: string | null;
-  segments: TranscriptSegment[];
+  segments: EmbeddedSegment[];
 }
 
-interface Props {
-  segments: TranscriptSegment[];
-  settings: Settings;
-}
-
-// Group transcript segments into ~targetCount evenly-sized time blocks.
-function groupIntoBlocks(
-  segments: TranscriptSegment[],
-  targetCount: number = 15
-): TimelineBlock[] {
-  if (!segments.length) return [];
-  const blockSize = Math.max(1, Math.ceil(segments.length / targetCount));
-  const totalDuration =
-    segments[segments.length - 1].start +
-    (segments[segments.length - 1].duration || 60);
-
+/**
+ * Time-based fallback: cut every TARGET_SECS seconds.
+ */
+function timeBasedGrouping(segs: EmbeddedSegment[]): TimelineBlock[] {
+  if (!segs.length) return [];
   const blocks: TimelineBlock[] = [];
-  for (let i = 0; i < segments.length; i += blockSize) {
-    const blockSegs = segments.slice(i, i + blockSize);
-    const startTime = blockSegs[0].start;
-    const endTime =
-      i + blockSize < segments.length
-        ? segments[i + blockSize].start
-        : totalDuration;
-    blocks.push({ startTime, endTime, title: null, segments: blockSegs });
+  let blockSegs: EmbeddedSegment[] = [];
+  let startTime = segs[0].start;
+
+  for (const seg of segs) {
+    blockSegs.push(seg);
+    if (seg.start - startTime >= TARGET_SECS) {
+      const last = blockSegs[blockSegs.length - 1];
+      blocks.push({
+        startTime,
+        endTime: last.start + (last.duration || 0),
+        title: null,
+        segments: blockSegs,
+      });
+      blockSegs = [];
+      startTime = seg.start + (seg.duration || 0);
+    }
+  }
+
+  if (blockSegs.length) {
+    const last = blockSegs[blockSegs.length - 1];
+    blocks.push({
+      startTime,
+      endTime: last.start + (last.duration || 0),
+      title: null,
+      segments: blockSegs,
+    });
   }
   return blocks;
 }
 
-export default function TimelineTab({ segments, settings }: Props) {
+/**
+ * Semantic segmentation using TextTiling-inspired cosine similarity between
+ * sliding windows on either side of each candidate boundary.
+ *
+ * Algorithm:
+ * 1. For each position i, compute cosine similarity between the average
+ *    embedding of the WINDOW segments before and after i.
+ *    Low similarity → likely topic change.
+ * 2. Find local minima in the similarity curve.
+ * 3. Greedily select the deepest minima as boundaries, respecting MIN_SECS.
+ */
+function semanticGrouping(segs: EmbeddedSegment[]): TimelineBlock[] {
+  const n = segs.length;
+  const totalDuration = segs[n - 1].start + (segs[n - 1].duration || 0);
+  const targetCount = Math.min(
+    MAX_BLOCKS,
+    Math.max(2, Math.round(totalDuration / TARGET_SECS))
+  );
+
+  if (n < WINDOW * 2 + 2) return timeBasedGrouping(segs);
+
+  // Step 1: similarity score at every interior position
+  const sims: Array<{ idx: number; score: number }> = [];
+  for (let i = WINDOW; i < n - WINDOW; i++) {
+    const left = avgVec(segs.slice(i - WINDOW, i).map((s) => s.embedding));
+    const right = avgVec(segs.slice(i, i + WINDOW).map((s) => s.embedding));
+    sims.push({ idx: i, score: cosine(left, right) });
+  }
+
+  // Step 2: local minima (true valley points in the similarity curve)
+  const minima = sims.filter((p, j, arr) => {
+    const prev = arr[j - 1]?.score ?? 1;
+    const next = arr[j + 1]?.score ?? 1;
+    return p.score < prev && p.score < next;
+  });
+
+  // Step 3: sort by score ascending (lowest sim = strongest topic break)
+  minima.sort((a, b) => a.score - b.score);
+
+  // Step 4: greedily pick boundaries respecting minimum gap
+  const chosen: number[] = [];
+  for (const { idx } of minima) {
+    if (chosen.length >= targetCount - 1) break;
+    const t = segs[idx].start;
+    if (t < MIN_SECS) continue;
+    if (totalDuration - t < MIN_SECS) continue;
+    const tooClose = chosen.some(
+      (c) => Math.abs(segs[c].start - t) < MIN_SECS
+    );
+    if (!tooClose) chosen.push(idx);
+  }
+
+  // Step 5: build blocks
+  chosen.sort((a, b) => a - b);
+  const cuts = [0, ...chosen, n];
+  return cuts.slice(0, -1).map((start, i) => {
+    const end = cuts[i + 1];
+    const blockSegs = segs.slice(start, end);
+    const last = blockSegs[blockSegs.length - 1];
+    return {
+      startTime: blockSegs[0].start,
+      endTime: last.start + (last.duration || 0),
+      title: null,
+      segments: blockSegs,
+    };
+  });
+}
+
+function groupIntoBlocks(segs: EmbeddedSegment[]): {
+  blocks: TimelineBlock[];
+  method: "semantic" | "time";
+} {
+  if (!segs.length) return { blocks: [], method: "time" };
+  const hasEmbeddings = segs[0].embedding.length > 0;
+  if (hasEmbeddings) {
+    return { blocks: semanticGrouping(segs), method: "semantic" };
+  }
+  return { blocks: timeBasedGrouping(segs), method: "time" };
+}
+
+// ---------------------------------------------------------------------------
+// Cache helpers  (localStorage, keyed by videoId + method)
+// ---------------------------------------------------------------------------
+
+interface TimelineCache {
+  segMethod: "semantic" | "time";
+  blockCount: number;
+  titles: string[];
+}
+
+function cacheKey(videoId: string, method: "semantic" | "time") {
+  return `yt-transcript-timeline:${videoId}:${method}`;
+}
+
+function loadCache(videoId: string, method: "semantic" | "time"): TimelineCache | null {
+  try {
+    const raw = localStorage.getItem(cacheKey(videoId, method));
+    if (!raw) return null;
+    return JSON.parse(raw) as TimelineCache;
+  } catch {
+    return null;
+  }
+}
+
+function saveCache(videoId: string, method: "semantic" | "time", blocks: TimelineBlock[]) {
+  try {
+    const data: TimelineCache = {
+      segMethod: method,
+      blockCount: blocks.length,
+      titles: blocks.map((b) => b.title ?? ""),
+    };
+    localStorage.setItem(cacheKey(videoId, method), JSON.stringify(data));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+interface Props {
+  segments: EmbeddedSegment[];
+  settings: Settings;
+  videoId: string | null;
+}
+
+export default function TimelineTab({ segments, settings, videoId }: Props) {
   const [blocks, setBlocks] = useState<TimelineBlock[]>([]);
+  const [segMethod, setSegMethod] = useState<"semantic" | "time">("time");
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState("");
   const hasGeneratedRef = useRef(false);
@@ -51,14 +214,32 @@ export default function TimelineTab({ segments, settings }: Props) {
   const hasProvider = availableProviders.length > 0;
   const apiKey = settings.apiKeys[settings.selectedProvider] ?? "";
 
-  // Group segments on mount / when segments change
+  // Re-segment whenever the segments prop changes, restoring from cache if available
   useEffect(() => {
     if (!segments.length) return;
-    setBlocks(groupIntoBlocks(segments));
+    const { blocks: newBlocks, method } = groupIntoBlocks(segments);
+    setSegMethod(method);
     hasGeneratedRef.current = false;
-  }, [segments]);
 
-  // Auto-generate when blocks are ready and provider is available
+    // Try to restore cached titles for this video + method
+    if (videoId) {
+      const cached = loadCache(videoId, method);
+      if (cached && cached.blockCount === newBlocks.length) {
+        // Patch titles onto freshly-computed blocks (no AI call needed)
+        const restored = newBlocks.map((b, i) => ({
+          ...b,
+          title: cached.titles[i] || null,
+        }));
+        setBlocks(restored);
+        hasGeneratedRef.current = true; // skip auto-generation
+        return;
+      }
+    }
+
+    setBlocks(newBlocks);
+  }, [segments, videoId]);
+
+  // Auto-generate titles once blocks are ready and a provider is available
   useEffect(() => {
     if (
       blocks.length > 0 &&
@@ -79,7 +260,6 @@ export default function TimelineTab({ segments, settings }: Props) {
     const inputBlocks = currentBlocks.map((b) => ({
       startTime: b.startTime,
       endTime: b.endTime,
-      // Send up to ~600 chars of transcript per block so the prompt stays compact
       text: b.segments
         .map((s) => s.text)
         .join(" ")
@@ -102,12 +282,13 @@ export default function TimelineTab({ segments, settings }: Props) {
         setGenError(response.error);
       } else if (response?.titles) {
         const titles: string[] = response.titles;
-        setBlocks((prev) =>
-          prev.map((b, i) => ({
-            ...b,
-            title: titles[i] ?? `Segment ${i + 1}`,
-          }))
-        );
+        const updated = currentBlocks.map((b, i) => ({
+          ...b,
+          title: titles[i] ?? `Segment ${i + 1}`,
+        }));
+        setBlocks(updated);
+        // Persist so the next tab-switch skips generation entirely
+        if (videoId) saveCache(videoId, segMethod, updated);
       }
     } catch (err) {
       setGenError(err instanceof Error ? err.message : "Unknown error");
@@ -148,7 +329,7 @@ export default function TimelineTab({ segments, settings }: Props) {
         overflow: "hidden",
       }}
     >
-      {/* Header row */}
+      {/* Header */}
       <div
         style={{
           padding: "8px 14px",
@@ -160,21 +341,45 @@ export default function TimelineTab({ segments, settings }: Props) {
           flexShrink: 0,
         }}
       >
-        <span
-          style={{
-            fontSize: 12,
-            color: "var(--yt-spec-text-secondary, #aaa)",
-            flex: 1,
-          }}
-        >
-          {blocks.length} segments
-          {generating && " · generating titles…"}
-          {!hasProvider && " · add an API key to generate titles"}
-        </span>
+        <div style={{ flex: 1 }}>
+          <span
+            style={{
+              fontSize: 12,
+              color: "var(--yt-spec-text-secondary, #aaa)",
+            }}
+          >
+            {blocks.length} segments
+            {generating && " · generating titles…"}
+          </span>
+          <span
+            style={{
+              fontSize: 10,
+              color: "var(--yt-spec-text-secondary, #666)",
+              marginLeft: 6,
+            }}
+          >
+            {segMethod === "semantic" ? "· semantic" : "· time-based"}
+          </span>
+          {!hasProvider && (
+            <span
+              style={{
+                fontSize: 11,
+                color: "#fbbf24",
+                marginLeft: 6,
+              }}
+            >
+              · add an API key to generate titles
+            </span>
+          )}
+        </div>
         {hasProvider && !generating && (
           <button
             type="button"
             onClick={() => {
+              // Clear cache so fresh titles are saved after regeneration
+              if (videoId) {
+                try { localStorage.removeItem(cacheKey(videoId, segMethod)); } catch { /* */ }
+              }
               hasGeneratedRef.current = true;
               generateTitles(blocks);
             }}
@@ -215,6 +420,9 @@ export default function TimelineTab({ segments, settings }: Props) {
       >
         {blocks.map((block, idx) => {
           const isLoading = generating && block.title === null;
+          const durationSecs = block.endTime - block.startTime;
+          const durationMins = (durationSecs / 60).toFixed(1);
+
           return (
             <div
               key={idx}
@@ -222,7 +430,6 @@ export default function TimelineTab({ segments, settings }: Props) {
               style={{
                 display: "flex",
                 alignItems: "flex-start",
-                gap: 0,
                 padding: "0 14px",
                 cursor: "pointer",
               }}
@@ -235,7 +442,7 @@ export default function TimelineTab({ segments, settings }: Props) {
                   "transparent";
               }}
             >
-              {/* Timeline spine */}
+              {/* Spine */}
               <div
                 style={{
                   display: "flex",
@@ -272,19 +479,34 @@ export default function TimelineTab({ segments, settings }: Props) {
 
               {/* Content */}
               <div style={{ flex: 1, padding: "8px 0 8px 10px" }}>
-                <span
+                <div
                   style={{
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color:
-                      "var(--yt-spec-call-to-action-inverse-color, #ff0000)",
-                    fontVariantNumeric: "tabular-nums",
-                    display: "block",
+                    display: "flex",
+                    alignItems: "baseline",
+                    gap: 6,
                     marginBottom: 2,
                   }}
                 >
-                  {formatTimestamp(block.startTime)}
-                </span>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color:
+                        "var(--yt-spec-call-to-action-inverse-color, #ff0000)",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {formatTimestamp(block.startTime)}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      color: "var(--yt-spec-text-secondary, #666)",
+                    }}
+                  >
+                    {durationMins} min
+                  </span>
+                </div>
                 {isLoading ? (
                   <div
                     style={{
@@ -293,7 +515,8 @@ export default function TimelineTab({ segments, settings }: Props) {
                       borderRadius: 6,
                       background:
                         "var(--yt-spec-10-percent-layer, rgba(255,255,255,0.08))",
-                      animation: "yt-transcript-pulse 1.2s ease-in-out infinite",
+                      animation:
+                        "yt-transcript-pulse 1.2s ease-in-out infinite",
                     }}
                   />
                 ) : (

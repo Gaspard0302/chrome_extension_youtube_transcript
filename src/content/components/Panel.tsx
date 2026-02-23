@@ -5,17 +5,15 @@ import {
   fetchTranscript,
   chunkTranscript,
 } from "../../lib/transcript";
-import type { FetchDiagnostics } from "../../lib/transcript";
 import { embedSegments } from "../../lib/embeddings";
 import { setSegments } from "../../lib/segment-store";
 import type { EmbeddedSegment, Settings, TranscriptSegment } from "../../types";
 import { DEFAULT_SETTINGS } from "../../lib/providers";
 import ChatTab from "./ChatTab";
 import TranscriptTab from "./TranscriptTab";
-import DetailsTab from "./DetailsTab";
 import TimelineTab from "./TimelineTab";
 
-type Tab = "transcript" | "chat" | "timeline" | "details";
+type Tab = "transcript" | "chat" | "timeline";
 type LoadState = "idle" | "fetching" | "embedding" | "ready" | "error";
 
 interface Props {
@@ -29,8 +27,6 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [loadProgress, setLoadProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
-  const [errorDetails, setErrorDetails] = useState<string | null>(null);
-  const [diagnostics, setDiagnostics] = useState<FetchDiagnostics | null>(null);
   const [rawSegments, setRawSegments] = useState<TranscriptSegment[]>([]);
   const [embeddedSegments, setEmbeddedSegments] = useState<EmbeddedSegment[]>(
     []
@@ -49,7 +45,7 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
         settingsRef.current = s as Settings;
       }
     });
-  }, []);
+  }, [open]);
 
   function handleSettingsChange(s: Settings) {
     setSettings(s);
@@ -71,11 +67,8 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
   async function loadTranscript(videoId: string) {
     try {
       setLoadState("fetching");
-      setErrorDetails(null);
-      setDiagnostics(null);
 
-      const { segments, diagnostics: diag } = await fetchTranscript(videoId);
-      setDiagnostics(diag);
+      const { segments } = await fetchTranscript(videoId);
       const chunks = chunkTranscript(segments);
       setRawSegments(chunks);
 
@@ -98,12 +91,6 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
       setLoadState("ready");
     } catch (err) {
       setErrorMsg("Failed to load transcript.");
-      setErrorDetails(
-        err instanceof Error ? err.stack || err.message : String(err)
-      );
-      const diagFromErr = (err as { diagnostics?: FetchDiagnostics })
-        .diagnostics;
-      if (diagFromErr) setDiagnostics(diagFromErr);
       setLoadState("error");
     }
   }
@@ -112,7 +99,6 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
     { id: "transcript", label: "Transcript" },
     { id: "chat", label: "AI Chat" },
     { id: "timeline", label: "Timeline" },
-    { id: "details", label: "Details" },
   ];
 
   const embeddedOrRaw: EmbeddedSegment[] =
@@ -129,7 +115,7 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
   const trigger = (
     <button
       onClick={() => setOpen((v) => !v)}
-      title={open ? "Close transcript panel" : "Open Transcript & AI"}
+      title={open ? "Close TranscriptAI" : "Open TranscriptAI"}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -162,7 +148,7 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
       >
         <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-1 9H9V9h10v2zm-4 4H9v-2h6v2zm4-8H9V5h10v2z" />
       </svg>
-      Transcript &amp; AI
+      TranscriptAI
     </button>
   );
 
@@ -202,7 +188,7 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
               color: "var(--yt-spec-text-primary, #f1f1f1)",
             }}
           >
-            Transcript &amp; AI
+            TranscriptAI
           </span>
           <span
             style={{
@@ -296,26 +282,14 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
         }}
       >
         {loadState === "error" && (
-          <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            <div
-              style={{
-                padding: 16,
-                color: "#f87171",
-                fontSize: 13,
-                borderBottom:
-                  "1px solid var(--yt-spec-10-percent-layer, rgba(255,255,255,0.1))",
-              }}
-            >
-              {errorMsg} Check the <strong>Details</strong> tab for more
-              information.
-            </div>
-            {tab === "details" && (
-              <DetailsTab
-                segments={rawSegments}
-                errorDetails={errorDetails}
-                diagnostics={diagnostics}
-              />
-            )}
+          <div
+            style={{
+              padding: 16,
+              color: "#f87171",
+              fontSize: 13,
+            }}
+          >
+            {errorMsg}
           </div>
         )}
 
@@ -376,15 +350,9 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
             )}
             {tab === "timeline" && (
               <TimelineTab
-                segments={rawSegments}
+                segments={embeddedOrRaw}
                 settings={settings}
-              />
-            )}
-            {tab === "details" && (
-              <DetailsTab
-                segments={rawSegments}
-                errorDetails={errorDetails}
-                diagnostics={diagnostics}
+                videoId={videoIdRef.current}
               />
             )}
           </>
