@@ -66,7 +66,7 @@ export const PROVIDERS: ProviderConfig[] = [
 export const DEFAULT_SETTINGS = {
   apiKeys: {},
   selectedProvider: "anthropic" as const,
-  selectedModel: "claude-sonnet-4-6",
+  selectedModel: "", // No default model; user must choose in settings
   ollamaBaseUrl: "http://localhost:11434",
   semanticSearchEnabled: true,
 };

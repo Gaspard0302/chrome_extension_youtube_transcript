@@ -1,16 +1,11 @@
 /**
- * Offscreen document — embedding pipeline host.
+ * Offscreen document — embedding pipeline.
  *
- * Chrome service workers cannot use dynamic import() at runtime (HTML spec
- * restriction), and content scripts cannot load chrome-extension:// modules
- * dynamically. Offscreen documents are regular extension pages: they have
- * `window`, can do dynamic imports, and can run WASM. They persist until
- * explicitly closed and communicate via chrome.runtime.onMessage.
+ * Service workers cannot run WASM / dynamic import() at runtime, so the
+ * transformers.js embedding pipeline lives here.
  *
  * Message flow:
- *   content script → EMBED_TEXT → background SW
- *   background SW  → OFFSCREEN_EMBED_TEXT → offscreen doc
- *   offscreen doc  → sendResponse({ embedding }) → background SW → content script
+ *   Embed: content → EMBED_TEXT → background → OFFSCREEN_EMBED_TEXT → offscreen → sendResponse
  */
 
 import { pipeline, env } from "@huggingface/transformers";
@@ -38,16 +33,23 @@ async function getPipeline(): Promise<EmbedPipeline> {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type !== "OFFSCREEN_EMBED_TEXT") return false;
+  if (message.type === "OFFSCREEN_EMBED_TEXT") {
+    getPipeline()
+      .then((pipe) =>
+        pipe(message.payload.text, { pooling: "mean", normalize: true })
+      )
+      .then((output) => {
+        sendResponse({
+          embedding: Array.from(output[0].data as Float32Array),
+        });
+      })
+      .catch((err) => {
+        sendResponse({
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    return true;
+  }
 
-  getPipeline()
-    .then((pipe) => pipe(message.payload.text, { pooling: "mean", normalize: true }))
-    .then((output) => {
-      sendResponse({ embedding: Array.from(output[0].data as Float32Array) });
-    })
-    .catch((err) => {
-      sendResponse({ error: err instanceof Error ? err.message : String(err) });
-    });
-
-  return true; // keep message channel open for async response
+  return false;
 });

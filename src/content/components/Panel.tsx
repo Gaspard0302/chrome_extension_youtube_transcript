@@ -1,43 +1,61 @@
 import React, { useEffect, useRef, useState } from "react";
-import { extractVideoId, fetchTranscript, chunkTranscript } from "../../lib/transcript";
+import { createPortal } from "react-dom";
+import {
+  extractVideoId,
+  fetchTranscript,
+  chunkTranscript,
+} from "../../lib/transcript";
 import type { FetchDiagnostics } from "../../lib/transcript";
 import { embedSegments } from "../../lib/embeddings";
 import type { EmbeddedSegment, Settings, TranscriptSegment } from "../../types";
 import { DEFAULT_SETTINGS } from "../../lib/providers";
-import SearchTab from "./SearchTab";
 import ChatTab from "./ChatTab";
 import TranscriptTab from "./TranscriptTab";
 import DetailsTab from "./DetailsTab";
 
-type Tab = "search" | "chat" | "transcript" | "details";
+type Tab = "transcript" | "chat" | "details";
 type LoadState = "idle" | "fetching" | "embedding" | "ready" | "error";
 
-export default function Panel() {
+interface Props {
+  triggerContainer: HTMLElement;
+  panelContainer: HTMLElement;
+}
+
+export default function Panel({ triggerContainer, panelContainer }: Props) {
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<Tab>("search");
+  const [tab, setTab] = useState<Tab>("transcript");
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [loadProgress, setLoadProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<FetchDiagnostics | null>(null);
-
   const [rawSegments, setRawSegments] = useState<TranscriptSegment[]>([]);
-  const [embeddedSegments, setEmbeddedSegments] = useState<EmbeddedSegment[]>([]);
-  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS as Settings);
+  const [embeddedSegments, setEmbeddedSegments] = useState<EmbeddedSegment[]>(
+    []
+  );
+  const [settings, setSettings] = useState<Settings>(
+    DEFAULT_SETTINGS as Settings
+  );
+  const settingsRef = useRef<Settings>(DEFAULT_SETTINGS as Settings);
 
   const videoIdRef = useRef<string | null>(null);
 
-  // Load settings once
   useEffect(() => {
     chrome.runtime.sendMessage({ type: "GET_SETTINGS" }, (s) => {
-      if (s) setSettings(s as Settings);
+      if (s) {
+        setSettings(s as Settings);
+        settingsRef.current = s as Settings;
+      }
     });
   }, []);
 
-  // Load transcript when panel opens
+  function handleSettingsChange(s: Settings) {
+    setSettings(s);
+    settingsRef.current = s;
+  }
+
   useEffect(() => {
     if (!open || loadState !== "idle") return;
-
     const videoId = extractVideoId(window.location.href);
     if (!videoId) {
       setErrorMsg("Could not find a video on this page.");
@@ -59,225 +77,322 @@ export default function Panel() {
       const chunks = chunkTranscript(segments);
       setRawSegments(chunks);
 
-      if (settings.semanticSearchEnabled) {
-        setLoadState("embedding");
-        const embedded = await embedSegments(chunks, (pct) =>
-          setLoadProgress(pct)
-        );
-        setEmbeddedSegments(embedded);
+      if (settingsRef.current.semanticSearchEnabled) {
+        try {
+          setLoadState("embedding");
+          const embedded = await embedSegments(chunks, (pct) =>
+            setLoadProgress(pct)
+          );
+          setEmbeddedSegments(embedded);
+        } catch (embErr) {
+          console.warn(
+            "[YT Transcript] Embedding failed, falling back to exact search:",
+            embErr
+          );
+          // embeddedSegments stays [] → semanticEnabled becomes false
+        }
       }
 
       setLoadState("ready");
     } catch (err) {
       setErrorMsg("Failed to load transcript.");
-      setErrorDetails(err instanceof Error ? err.stack || err.message : String(err));
-      const diagFromErr = (err as { diagnostics?: FetchDiagnostics }).diagnostics;
+      setErrorDetails(
+        err instanceof Error ? err.stack || err.message : String(err)
+      );
+      const diagFromErr = (err as { diagnostics?: FetchDiagnostics })
+        .diagnostics;
       if (diagFromErr) setDiagnostics(diagFromErr);
       setLoadState("error");
     }
   }
 
   const tabs: { id: Tab; label: string }[] = [
-    { id: "search", label: "Search" },
-    { id: "chat", label: "Chat" },
     { id: "transcript", label: "Transcript" },
+    { id: "chat", label: "AI Chat" },
     { id: "details", label: "Details" },
   ];
 
-  return (
-    <div style={{ pointerEvents: "auto" }}>
-      {/* Toggle button */}
-      <button
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          position: "fixed",
-          top: "50%",
-          right: open ? "380px" : "0px",
-          transform: "translateY(-50%)",
-          transition: "right 0.3s ease",
-          zIndex: 10000,
-          background: "#FF0000",
-          color: "white",
-          border: "none",
-          borderRadius: "6px 0 0 6px",
-          padding: "12px 6px",
-          cursor: "pointer",
-          fontSize: "10px",
-          fontWeight: "bold",
-          letterSpacing: "1px",
-          writingMode: "vertical-rl",
-          textOrientation: "mixed",
-        }}
-        title={open ? "Close transcript panel" : "Open transcript search"}
-      >
-        TRANSCRIPT
-      </button>
+  const embeddedOrRaw: EmbeddedSegment[] =
+    embeddedSegments.length > 0
+      ? embeddedSegments
+      : rawSegments.map((s, i) => ({ ...s, embedding: [], index: i }));
 
-      {/* Sidebar */}
+  const trigger = (
+    <button
+      onClick={() => setOpen((v) => !v)}
+      title={open ? "Close transcript panel" : "Open Transcript & AI"}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        background: open
+          ? "var(--yt-spec-text-primary, #f1f1f1)"
+          : "var(--yt-spec-badge-chip-background, #272727)",
+        color: open
+          ? "var(--yt-spec-base-background, #0f0f0f)"
+          : "var(--yt-spec-text-primary, #f1f1f1)",
+        border: "none",
+        borderRadius: "18px",
+        padding: "0 12px",
+        height: "36px",
+        cursor: "pointer",
+        fontFamily: "'Roboto', 'Arial', sans-serif",
+        fontSize: "14px",
+        fontWeight: 500,
+        whiteSpace: "nowrap",
+        transition: "background 0.15s, color 0.15s",
+        flexShrink: 0,
+      }}
+    >
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-1 9H9V9h10v2zm-4 4H9v-2h6v2zm4-8H9V5h10v2z" />
+      </svg>
+      Transcript &amp; AI
+    </button>
+  );
+
+  const panel = open ? (
+    <div
+      className="yt-transcript-ext"
+      tabIndex={-1}
+      style={{
+        background: "var(--yt-spec-brand-background-solid, #212121)",
+        borderRadius: "12px",
+        overflow: "hidden",
+        marginBottom: "16px",
+        fontFamily: "'Roboto', 'Arial', sans-serif",
+        color: "var(--yt-spec-text-primary, #f1f1f1)",
+      }}
+    >
+      {/* Header */}
       <div
         style={{
-          position: "fixed",
-          top: 0,
-          right: open ? 0 : "-380px",
-          width: "380px",
-          height: "100vh",
-          background: "#0F0F0F",
-          borderLeft: "1px solid #3F3F3F",
-          display: "flex",
-          flexDirection: "column",
-          transition: "right 0.3s ease",
-          zIndex: 9999,
-          fontFamily: "'Roboto', 'Arial', sans-serif",
-          color: "#F1F1F1",
-          overflow: "hidden",
+          padding: "12px 16px 0",
+          borderBottom:
+            "1px solid var(--yt-spec-10-percent-layer, rgba(255,255,255,0.1))",
         }}
       >
-        {/* Header */}
         <div
           style={{
-            padding: "14px 16px 0",
-            borderBottom: "1px solid #3F3F3F",
-            background: "#0F0F0F",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            marginBottom: "12px",
           }}
         >
-          <div
+          <span
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              marginBottom: "12px",
+              fontWeight: 700,
+              fontSize: 14,
+              color: "var(--yt-spec-text-primary, #f1f1f1)",
             }}
           >
-            <div
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: "#FF0000",
-                flexShrink: 0,
-              }}
-            />
-            <span style={{ fontWeight: 700, fontSize: 14 }}>
-              Transcript Search
-            </span>
-            <span style={{ marginLeft: "auto", fontSize: 11, color: "#AAAAAA" }}>
-              {loadState === "ready" && `${rawSegments.length} chunks`}
-              {loadState === "embedding" && `Embedding… ${loadProgress}%`}
-              {loadState === "fetching" && "Fetching…"}
-            </span>
-            <button
-              onClick={() => setOpen(false)}
-              title="Close"
-              style={{
-                marginLeft: 8,
-                background: "transparent",
-                border: "none",
-                color: "#AAAAAA",
-                cursor: "pointer",
-                fontSize: 18,
-                lineHeight: 1,
-                padding: "0 2px",
-                flexShrink: 0,
-              }}
-              onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "#F1F1F1")}
-              onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "#AAAAAA")}
-            >
-              ×
-            </button>
-          </div>
-
-          {/* Tabs */}
-          <div style={{ display: "flex", gap: 2 }}>
-            {tabs.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                style={{
-                  flex: 1,
-                  padding: "8px 0",
-                  background: "transparent",
-                  border: "none",
-                  borderBottom: tab === t.id ? "2px solid #FF0000" : "2px solid transparent",
-                  color: tab === t.id ? "#F1F1F1" : "#AAAAAA",
-                  cursor: "pointer",
-                  fontSize: 13,
-                  fontWeight: tab === t.id ? 600 : 400,
-                  transition: "all 0.15s",
-                }}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
+            Transcript &amp; AI
+          </span>
+          <span
+            style={{
+              marginLeft: "auto",
+              fontSize: 11,
+              color: "var(--yt-spec-text-secondary, #aaa)",
+            }}
+          >
+            {loadState === "ready" && `${rawSegments.length} chunks`}
+            {loadState === "embedding" && `Embedding… ${loadProgress}%`}
+            {loadState === "fetching" && "Fetching…"}
+          </span>
+          <button
+            onClick={() => setOpen(false)}
+            title="Close"
+            style={{
+              marginLeft: 8,
+              background: "transparent",
+              border: "none",
+              color: "var(--yt-spec-text-secondary, #aaa)",
+              cursor: "pointer",
+              fontSize: 20,
+              lineHeight: 1,
+              padding: "0 2px",
+              flexShrink: 0,
+              fontFamily: "inherit",
+            }}
+          >
+            ×
+          </button>
         </div>
 
-        {/* Body */}
-        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          {loadState === "error" && (
-            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-              <div style={{ padding: 16, color: "#f87171", fontSize: 13, borderBottom: "1px solid #3F3F3F" }}>
-                {errorMsg} Check the <strong>Details</strong> tab for more information.
-              </div>
-              {tab === "details" && <DetailsTab segments={rawSegments} errorDetails={errorDetails} diagnostics={diagnostics} />}
-            </div>
-          )}
-
-          {(loadState === "fetching" || loadState === "embedding") && (
-            <div style={{ padding: 24, textAlign: "center", color: "#AAAAAA", fontSize: 13 }}>
-              <div style={{ marginBottom: 8 }}>
-                {loadState === "fetching" ? "Fetching transcript…" : `Building search index… ${loadProgress}%`}
-              </div>
-              <div
-                style={{
-                  height: 3,
-                  background: "#3F3F3F",
-                  borderRadius: 2,
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    height: "100%",
-                    background: "#FF0000",
-                    width: loadState === "fetching" ? "30%" : `${loadProgress}%`,
-                    transition: "width 0.3s",
-                  }}
-                />
-              </div>
-            </div>
-          )}
-
-          {loadState === "ready" && (
-            <>
-              {tab === "search" && (
-                <SearchTab
-                  segments={embeddedSegments.length > 0 ? embeddedSegments : rawSegments.map((s, i) => ({ ...s, embedding: [], index: i }))}
-                  semanticEnabled={settings.semanticSearchEnabled && embeddedSegments.length > 0}
-                />
-              )}
-              {tab === "chat" && (
-                <ChatTab
-                  segments={rawSegments}
-                  settings={settings}
-                  onSettingsChange={setSettings}
-                />
-              )}
-              {tab === "transcript" && (
-                <TranscriptTab segments={rawSegments} />
-              )}
-              {tab === "details" && (
-                <DetailsTab segments={rawSegments} errorDetails={errorDetails} diagnostics={diagnostics} />
-              )}
-            </>
-          )}
-
-          {loadState === "idle" && (
-            <div style={{ padding: 24, color: "#AAAAAA", fontSize: 13 }}>
-              Opening panel…
-            </div>
-          )}
+        {/* Chip-style tabs */}
+        <div
+          style={{
+            display: "flex",
+            gap: "8px",
+            paddingBottom: "12px",
+            flexWrap: "wrap",
+          }}
+        >
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                (document.activeElement as HTMLElement)?.blur();
+                setTab(t.id);
+              }}
+              style={{
+                padding: "0 12px",
+                height: "32px",
+                borderRadius: "16px",
+                border: "none",
+                background:
+                  tab === t.id
+                    ? "var(--yt-spec-text-primary, #f1f1f1)"
+                    : "var(--yt-spec-10-percent-layer, rgba(255,255,255,0.05))",
+                color:
+                  tab === t.id
+                    ? "var(--yt-spec-base-background, #0f0f0f)"
+                    : "var(--yt-spec-text-primary, #f1f1f1)",
+                cursor: "pointer",
+                fontSize: "13px",
+                fontWeight: tab === t.id ? 600 : 400,
+                fontFamily: "inherit",
+                transition: "background 0.15s, color 0.15s",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
       </div>
+
+      {/* Body */}
+      <div
+        tabIndex={-1}
+        style={{
+          maxHeight: "480px",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        {loadState === "error" && (
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            <div
+              style={{
+                padding: 16,
+                color: "#f87171",
+                fontSize: 13,
+                borderBottom:
+                  "1px solid var(--yt-spec-10-percent-layer, rgba(255,255,255,0.1))",
+              }}
+            >
+              {errorMsg} Check the <strong>Details</strong> tab for more
+              information.
+            </div>
+            {tab === "details" && (
+              <DetailsTab
+                segments={rawSegments}
+                errorDetails={errorDetails}
+                diagnostics={diagnostics}
+              />
+            )}
+          </div>
+        )}
+
+        {(loadState === "fetching" || loadState === "embedding") && (
+          <div
+            style={{
+              padding: 24,
+              textAlign: "center",
+              color: "var(--yt-spec-text-secondary, #aaa)",
+              fontSize: 13,
+            }}
+          >
+            <div style={{ marginBottom: 8 }}>
+              {loadState === "fetching"
+                ? "Fetching transcript…"
+                : `Building search index… ${loadProgress}%`}
+            </div>
+            <div
+              style={{
+                height: 3,
+                background:
+                  "var(--yt-spec-10-percent-layer, rgba(255,255,255,0.1))",
+                borderRadius: 2,
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  height: "100%",
+                  background:
+                    "var(--yt-spec-call-to-action-inverse-color, #ff0000)",
+                  width:
+                    loadState === "fetching" ? "30%" : `${loadProgress}%`,
+                  transition: "width 0.3s",
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {loadState === "ready" && (
+          <>
+            {tab === "transcript" && (
+              <TranscriptTab
+                segments={embeddedOrRaw}
+                semanticEnabled={
+                  settings.semanticSearchEnabled && embeddedSegments.length > 0
+                }
+              />
+            )}
+            {tab === "chat" && (
+              <ChatTab
+                segments={rawSegments}
+                settings={settings}
+                onSettingsChange={handleSettingsChange}
+              />
+            )}
+            {tab === "details" && (
+              <DetailsTab
+                segments={rawSegments}
+                errorDetails={errorDetails}
+                diagnostics={diagnostics}
+              />
+            )}
+          </>
+        )}
+
+        {loadState === "idle" && (
+          <div
+            style={{
+              padding: 24,
+              color: "var(--yt-spec-text-secondary, #aaa)",
+              fontSize: 13,
+            }}
+          >
+            Opening panel…
+          </div>
+        )}
+      </div>
     </div>
+  ) : null;
+
+  return (
+    <>
+      {createPortal(trigger, triggerContainer)}
+      {createPortal(panel ?? <></>, panelContainer)}
+    </>
   );
 }

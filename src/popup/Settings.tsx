@@ -2,106 +2,197 @@ import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Settings } from "../types";
 import { PROVIDERS, DEFAULT_SETTINGS } from "../lib/providers";
-import "../content/content.css";
+
+// Popup runs in extension context; use same fallback palette as content script for consistent look
+// Match content panel: 12px cards, 18px chips
+const popupVars = {
+  bg: "#0f0f0f",
+  bgCard: "#212121",
+  border: "rgba(255,255,255,0.1)",
+  text: "#f1f1f1",
+  textSecondary: "#aaa",
+  accent: "#ff0000",
+  accentSuccess: "#166534",
+  radius: 12,
+  radiusChip: 18,
+};
 
 function SettingsApp() {
-  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS as Settings);
+  const [settings, setSettings] = useState<Settings>(
+    DEFAULT_SETTINGS as Settings
+  );
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     chrome.runtime.sendMessage({ type: "GET_SETTINGS" }, (s) => {
-      if (s) setSettings(s as Settings);
+      if (!s) return;
+      const loaded = s as Settings;
+      if (loaded.selectedModel === "" && loaded.apiKeys && typeof loaded.apiKeys === "object") {
+        const firstWithKey = PROVIDERS.find(
+          (p) => loaded.apiKeys[p.id] && String(loaded.apiKeys[p.id]).trim().length > 0
+        );
+        if (firstWithKey) {
+          setSettings({
+            ...loaded,
+            selectedProvider: firstWithKey.id,
+            selectedModel: firstWithKey.models[0].id,
+          });
+          return;
+        }
+      }
+      setSettings(loaded);
     });
   }, []);
 
   function save() {
-    chrome.runtime.sendMessage({ type: "SAVE_SETTINGS", payload: settings }, () => {
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    });
+    chrome.runtime.sendMessage(
+      { type: "SAVE_SETTINGS", payload: settings },
+      () => {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      }
+    );
   }
 
   function setKey(provider: string, key: string) {
-    setSettings((prev) => ({
-      ...prev,
-      apiKeys: { ...prev.apiKeys, [provider]: key },
-    }));
+    setSettings((prev) => {
+      const next = { ...prev, apiKeys: { ...prev.apiKeys, [provider]: key } };
+      if (key.trim().length > 0 && prev.selectedModel === "") {
+        const p = PROVIDERS.find((pr) => pr.id === provider);
+        if (p) {
+          next.selectedProvider = p.id;
+          next.selectedModel = p.models[0].id;
+        }
+      }
+      return next;
+    });
   }
 
-  const style = {
-    container: {
-      width: 340,
-      padding: "16px",
-      background: "#0F0F0F",
-      color: "#F1F1F1",
-      fontFamily: "'Roboto', 'Arial', sans-serif",
-      fontSize: 13,
-    } as React.CSSProperties,
-    label: {
-      display: "block",
-      fontSize: 11,
-      color: "#AAAAAA",
-      marginBottom: 4,
-      fontWeight: 600,
-      textTransform: "uppercase" as const,
-      letterSpacing: "0.5px",
-    },
-    input: {
-      width: "100%",
-      background: "#212121",
-      border: "1px solid #3F3F3F",
-      borderRadius: 6,
-      padding: "8px 10px",
-      color: "#F1F1F1",
-      fontSize: 12,
-      outline: "none",
-      boxSizing: "border-box" as const,
-      fontFamily: "monospace",
-    },
-    section: {
-      marginBottom: 16,
-      paddingBottom: 16,
-      borderBottom: "1px solid #1F1F1F",
-    },
-    sectionTitle: {
-      fontSize: 12,
-      fontWeight: 700,
-      color: "#FF0000",
-      marginBottom: 10,
-      display: "flex",
-      alignItems: "center",
-      gap: 6,
-    } as React.CSSProperties,
-  };
+  const providerModels =
+    PROVIDERS.find((p) => p.id === settings.selectedProvider)?.models ?? [];
 
   return (
-    <div style={style.container}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-        <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#FF0000" }} />
-        <span style={{ fontWeight: 700, fontSize: 15 }}>Transcript Search</span>
+    <div
+      style={{
+        width: 360,
+        minHeight: 320,
+        padding: "20px 16px",
+        background: popupVars.bg,
+        color: popupVars.text,
+        fontFamily: "'Roboto', 'Arial', sans-serif",
+        fontSize: 13,
+        boxSizing: "border-box",
+        border: `1px solid ${popupVars.border}`,
+        borderRadius: popupVars.radius,
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          marginBottom: 20,
+        }}
+      >
+        <div
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: "50%",
+            background: popupVars.accent,
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ fontWeight: 700, fontSize: 16 }}>Transcript & AI</span>
       </div>
 
-      {/* API Keys */}
-      <div style={style.section}>
-        <div style={style.sectionTitle}>API Keys</div>
+      {/* API Keys — chip-style section */}
+      <section
+        style={{
+          marginBottom: 20,
+          paddingBottom: 16,
+          borderBottom: `1px solid ${popupVars.border}`,
+        }}
+      >
+        <h2
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            color: popupVars.text,
+            margin: "0 0 12px",
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+          }}
+        >
+          API Keys
+        </h2>
         {PROVIDERS.filter((p) => p.requiresKey).map((p) => (
           <div key={p.id} style={{ marginBottom: 10 }}>
-            <label style={style.label}>{p.label}</label>
+            <label
+              style={{
+                display: "block",
+                fontSize: 11,
+                color: popupVars.textSecondary,
+                marginBottom: 4,
+                fontWeight: 600,
+              }}
+            >
+              {p.label}
+            </label>
             <input
               type="password"
               value={settings.apiKeys[p.id] ?? ""}
               onChange={(e) => setKey(p.id, e.target.value)}
               placeholder={`${p.label} API key…`}
-              style={style.input}
+              style={{
+                width: "100%",
+                background: popupVars.bgCard,
+                border: `1px solid ${popupVars.border}`,
+                borderRadius: popupVars.radiusChip,
+                padding: "10px 14px",
+                color: popupVars.text,
+                fontSize: 13,
+                outline: "none",
+                boxSizing: "border-box",
+                fontFamily: "inherit",
+              }}
             />
           </div>
         ))}
-      </div>
+      </section>
 
       {/* Ollama */}
-      <div style={style.section}>
-        <div style={style.sectionTitle}>Ollama (local models)</div>
-        <label style={style.label}>Base URL</label>
+      <section
+        style={{
+          marginBottom: 20,
+          paddingBottom: 16,
+          borderBottom: `1px solid ${popupVars.border}`,
+        }}
+      >
+        <h2
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            color: popupVars.text,
+            margin: "0 0 12px",
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+          }}
+        >
+          Ollama (local)
+        </h2>
+        <label
+          style={{
+            display: "block",
+            fontSize: 11,
+            color: popupVars.textSecondary,
+            marginBottom: 4,
+            fontWeight: 600,
+          }}
+        >
+          Base URL
+        </label>
         <input
           type="text"
           value={settings.ollamaBaseUrl}
@@ -109,14 +200,52 @@ function SettingsApp() {
             setSettings((prev) => ({ ...prev, ollamaBaseUrl: e.target.value }))
           }
           placeholder="http://localhost:11434"
-          style={style.input}
+          style={{
+            width: "100%",
+            background: popupVars.bgCard,
+            border: `1px solid ${popupVars.border}`,
+            borderRadius: popupVars.radiusChip,
+            padding: "10px 14px",
+            color: popupVars.text,
+            fontSize: 13,
+            outline: "none",
+            boxSizing: "border-box",
+            fontFamily: "inherit",
+          }}
         />
-      </div>
+      </section>
 
-      {/* Default provider */}
-      <div style={style.section}>
-        <div style={style.sectionTitle}>Defaults</div>
-        <label style={style.label}>Default provider</label>
+      {/* Default provider & model — chip-style selects */}
+      <section
+        style={{
+          marginBottom: 20,
+          paddingBottom: 16,
+          borderBottom: `1px solid ${popupVars.border}`,
+        }}
+      >
+        <h2
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            color: popupVars.text,
+            margin: "0 0 12px",
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+          }}
+        >
+          AI Chat defaults
+        </h2>
+        <label
+          style={{
+            display: "block",
+            fontSize: 11,
+            color: popupVars.textSecondary,
+            marginBottom: 4,
+            fontWeight: 600,
+          }}
+        >
+          Provider
+        </label>
         <select
           value={settings.selectedProvider}
           onChange={(e) => {
@@ -124,10 +253,23 @@ function SettingsApp() {
             setSettings((prev) => ({
               ...prev,
               selectedProvider: p.id,
-              selectedModel: p.models[0].id,
+              selectedModel: "", // No default model; user must choose
             }));
           }}
-          style={{ ...style.input, fontFamily: "inherit" }}
+          style={{
+            width: "100%",
+            background: popupVars.bgCard,
+            border: `1px solid ${popupVars.border}`,
+            borderRadius: popupVars.radiusChip,
+            padding: "10px 14px",
+            color: popupVars.text,
+            fontSize: 13,
+            marginBottom: 12,
+            cursor: "pointer",
+            outline: "none",
+            fontFamily: "inherit",
+            boxSizing: "border-box",
+          }}
         >
           {PROVIDERS.map((p) => (
             <option key={p.id} value={p.id}>
@@ -135,27 +277,51 @@ function SettingsApp() {
             </option>
           ))}
         </select>
-        <div style={{ height: 8 }} />
-        <label style={style.label}>Default model</label>
+        <label
+          style={{
+            display: "block",
+            fontSize: 11,
+            color: popupVars.textSecondary,
+            marginBottom: 4,
+            fontWeight: 600,
+          }}
+        >
+          Model
+        </label>
         <select
           value={settings.selectedModel}
           onChange={(e) =>
             setSettings((prev) => ({ ...prev, selectedModel: e.target.value }))
           }
-          style={{ ...style.input, fontFamily: "inherit" }}
+          style={{
+            width: "100%",
+            background: popupVars.bgCard,
+            border: `1px solid ${popupVars.border}`,
+            borderRadius: popupVars.radiusChip,
+            padding: "10px 14px",
+            color: popupVars.text,
+            fontSize: 13,
+            cursor: "pointer",
+            outline: "none",
+            fontFamily: "inherit",
+            boxSizing: "border-box",
+          }}
         >
-          {(
-            PROVIDERS.find((p) => p.id === settings.selectedProvider)?.models ??
-            []
-          ).map((m) => (
+          <option value="">Select a model</option>
+          {providerModels.map((m) => (
             <option key={m.id} value={m.id}>
               {m.label}
             </option>
           ))}
         </select>
-        <div style={{ height: 10 }} />
         <label
-          style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            cursor: "pointer",
+            marginTop: 12,
+          }}
         >
           <input
             type="checkbox"
@@ -166,34 +332,42 @@ function SettingsApp() {
                 semanticSearchEnabled: e.target.checked,
               }))
             }
-            style={{ accentColor: "#FF0000" }}
+            style={{ accentColor: popupVars.accent }}
           />
-          <span style={{ fontSize: 12, color: "#F1F1F1" }}>
-            Enable semantic (AI) search
-          </span>
-          <span style={{ fontSize: 10, color: "#AAAAAA" }}>
-            (downloads 23MB model once)
+          <span style={{ fontSize: 13, color: popupVars.text }}>
+            Enable semantic (AI) search in transcript
           </span>
         </label>
-      </div>
+        <p
+          style={{
+            margin: "4px 0 0 28px",
+            fontSize: 11,
+            color: popupVars.textSecondary,
+          }}
+        >
+          Downloads a 23MB model once for meaning-based search.
+        </p>
+      </section>
 
-      {/* Save */}
+      {/* Save button — chip-style */}
       <button
+        type="button"
         onClick={save}
         style={{
           width: "100%",
-          padding: "10px",
-          background: saved ? "#166534" : "#CC0000",
+          padding: "12px 16px",
+          background: saved ? popupVars.accentSuccess : popupVars.accent,
           border: "none",
-          borderRadius: 8,
-          color: "white",
-          fontSize: 13,
+          borderRadius: popupVars.radius,
+          color: "#fff",
+          fontSize: 14,
           fontWeight: 700,
           cursor: "pointer",
           transition: "background 0.2s",
+          fontFamily: "inherit",
         }}
       >
-        {saved ? "Saved!" : "Save Settings"}
+        {saved ? "Saved!" : "Save settings"}
       </button>
     </div>
   );

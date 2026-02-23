@@ -5,130 +5,50 @@
     "src": "../../../../../@crx/manifest",
     "isEntry": true
   },
-  "_content-!~{005}~.js": {
-    "file": "assets/content-Bm3Uu7xa.css",
-    "src": "_content-!~{005}~.js"
-  },
-  "_content-DmZOpr4u.js": {
-    "file": "assets/content-DmZOpr4u.js",
-    "name": "content",
-    "css": [
-      "assets/content-Bm3Uu7xa.css"
-    ]
+  "_client-B2dwjR_T.js": {
+    "file": "assets/client-B2dwjR_T.js",
+    "name": "client"
   },
   "_modulepreload-polyfill-B5Qt9EMX.js": {
     "file": "assets/modulepreload-polyfill-B5Qt9EMX.js",
     "name": "modulepreload-polyfill"
   },
-  "_providers-D_NaGG7O.js": {
-    "file": "assets/providers-D_NaGG7O.js",
+  "_providers-DGP2A9J8.js": {
+    "file": "assets/providers-DGP2A9J8.js",
     "name": "providers"
   },
-  "_types-B0luv8fm.js": {
-    "file": "assets/types-B0luv8fm.js",
-    "name": "types"
-  },
   "index.tsx-loader.js": {
-    "file": "assets/index.tsx-loader-CDk1TVXS.js",
+    "file": "assets/index.tsx-loader-DgAv1kez.js",
     "src": "index.tsx-loader.js"
-  },
-  "node_modules/@ai-sdk/anthropic/dist/index.mjs": {
-    "file": "assets/index-CnjmXom8.js",
-    "name": "index",
-    "src": "node_modules/@ai-sdk/anthropic/dist/index.mjs",
-    "isDynamicEntry": true,
-    "imports": [
-      "_types-B0luv8fm.js"
-    ]
-  },
-  "node_modules/@ai-sdk/google/dist/index.mjs": {
-    "file": "assets/index-DDviwPPI.js",
-    "name": "index",
-    "src": "node_modules/@ai-sdk/google/dist/index.mjs",
-    "isDynamicEntry": true,
-    "imports": [
-      "_types-B0luv8fm.js"
-    ]
-  },
-  "node_modules/@ai-sdk/groq/dist/index.mjs": {
-    "file": "assets/index-DsxTHHhL.js",
-    "name": "index",
-    "src": "node_modules/@ai-sdk/groq/dist/index.mjs",
-    "isDynamicEntry": true,
-    "imports": [
-      "_types-B0luv8fm.js"
-    ]
-  },
-  "node_modules/@ai-sdk/mistral/dist/index.mjs": {
-    "file": "assets/index-BAOKEl7B.js",
-    "name": "index",
-    "src": "node_modules/@ai-sdk/mistral/dist/index.mjs",
-    "isDynamicEntry": true,
-    "imports": [
-      "_types-B0luv8fm.js"
-    ]
-  },
-  "node_modules/@ai-sdk/openai/dist/index.mjs": {
-    "file": "assets/index-CJOPnOUA.js",
-    "name": "index",
-    "src": "node_modules/@ai-sdk/openai/dist/index.mjs",
-    "isDynamicEntry": true,
-    "imports": [
-      "_types-B0luv8fm.js"
-    ]
-  },
-  "node_modules/ai/dist/index.mjs": {
-    "file": "assets/index-8Gn8JPIE.js",
-    "name": "index",
-    "src": "node_modules/ai/dist/index.mjs",
-    "isDynamicEntry": true,
-    "imports": [
-      "_types-B0luv8fm.js"
-    ]
-  },
-  "node_modules/ollama-ai-provider/dist/index.mjs": {
-    "file": "assets/index-DI8bcMTT.js",
-    "name": "index",
-    "src": "node_modules/ollama-ai-provider/dist/index.mjs",
-    "isDynamicEntry": true,
-    "imports": [
-      "_types-B0luv8fm.js"
-    ]
   },
   "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm": {
     "file": "ort-wasm-simd-threaded.jsep.wasm",
     "src": "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm"
   },
   "src/background/index.ts": {
-    "file": "assets/index.ts-CEUWy5da.js",
+    "file": "assets/index.ts-Bh1QGRMg.js",
     "name": "index.ts",
     "src": "src/background/index.ts",
     "isEntry": true,
     "imports": [
-      "_providers-D_NaGG7O.js"
-    ],
-    "dynamicImports": [
-      "node_modules/ai/dist/index.mjs",
-      "node_modules/@ai-sdk/anthropic/dist/index.mjs",
-      "node_modules/@ai-sdk/openai/dist/index.mjs",
-      "node_modules/@ai-sdk/google/dist/index.mjs",
-      "node_modules/@ai-sdk/groq/dist/index.mjs",
-      "node_modules/@ai-sdk/mistral/dist/index.mjs",
-      "node_modules/ollama-ai-provider/dist/index.mjs"
+      "_providers-DGP2A9J8.js"
     ]
   },
   "src/content/index.tsx": {
-    "file": "assets/index.tsx-BGFcKHEd.js",
+    "file": "assets/index.tsx-QKEIkRcq.js",
     "name": "index.tsx",
     "src": "src/content/index.tsx",
     "isEntry": true,
     "imports": [
-      "_content-DmZOpr4u.js",
-      "_providers-D_NaGG7O.js"
+      "_client-B2dwjR_T.js",
+      "_providers-DGP2A9J8.js"
+    ],
+    "css": [
+      "assets/index-DXphHCXD.css"
     ]
   },
   "src/offscreen/index.html": {
-    "file": "assets/offscreen-C65oEfZj.js",
+    "file": "assets/offscreen-C1Lu6VM6.js",
     "name": "offscreen",
     "src": "src/offscreen/index.html",
     "isEntry": true,
@@ -140,14 +60,14 @@
     ]
   },
   "src/popup/index.html": {
-    "file": "assets/popup-Rww6d697.js",
+    "file": "assets/popup-DPDlMXNg.js",
     "name": "popup",
     "src": "src/popup/index.html",
     "isEntry": true,
     "imports": [
       "_modulepreload-polyfill-B5Qt9EMX.js",
-      "_content-DmZOpr4u.js",
-      "_providers-D_NaGG7O.js"
+      "_client-B2dwjR_T.js",
+      "_providers-DGP2A9J8.js"
     ]
   }
 }

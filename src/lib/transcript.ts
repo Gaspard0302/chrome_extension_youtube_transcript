@@ -65,17 +65,15 @@ function readCaptionTracksFromDOM(): CaptionTrack[] {
 }
 
 /**
- * Fetch caption tracks via the YouTube Innertube API using an ANDROID client.
- * ANDROID client responses do NOT include exp=xpe in baseUrl values, so they
- * work without Proof-of-Origin Tokens. This replaces the watch-page HTML scrape
- * which returned exp=xpe URLs that always yield empty bodies.
+ * Fetch caption tracks via the YouTube Innertube API using an ANDROID client,
+ * called directly from the content script context.
+ * Content scripts on youtube.com share the user's session, so the request
+ * carries valid cookies — YouTube accepts it and returns ANDROID-client tracks
+ * whose baseUrl values do NOT include exp=xpe, avoiding POT enforcement.
  */
 async function getCaptionTracksViaPageFetch(videoId: string): Promise<CaptionTrack[]> {
-  // Public Innertube API key (same key used by yt-dlp, youtube-transcript-api, etc.)
-  const apiKey = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
-
   const res = await fetch(
-    `https://www.youtube.com/youtubei/v1/player?key=${apiKey}&prettyPrint=false`,
+    `https://www.youtube.com/youtubei/v1/player?prettyPrint=false`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -124,7 +122,10 @@ export async function fetchTranscript(
 ): Promise<{ segments: TranscriptSegment[]; tracksLen: number; diagnostics: FetchDiagnostics }> {
   const diag: FetchDiagnostics = { steps: [] };
 
-  // Step 1: Page fetch via content script directly
+  // Step 1: Fetch caption tracks directly from the content script context.
+  // This avoids the background service worker, which cannot reliably set
+  // User-Agent for ANDROID Innertube requests. Content scripts run on
+  // youtube.com and the fetch carries the user's session cookies.
   let tracks: CaptionTrack[] = [];
   let bgError: string | null = null;
   try {
@@ -186,7 +187,77 @@ export async function fetchTranscript(
     detail: `Using "${preferredTrack.name?.simpleText ?? "unknown"}" (lang=${preferredTrack.languageCode}, kind=${preferredTrack.kind ?? "manual"})`,
   });
 
-  // Step 4: Fetch transcript data
+  // Step 4: Try Innertube get_transcript API.
+  // This returns cue data directly without needing timedtext URL fetches,
+  // completely bypassing the exp=xpe / POT issue. The WEB client request
+  // from the content script (with user cookies) looks like a normal page
+  // request so YouTube doesn't enforce server-side POT here.
+  try {
+    const enc = new TextEncoder();
+    const vb = enc.encode(videoId);
+    const lb = enc.encode(preferredTrack.languageCode);
+    // Proto: field 1 = videoId (string), field 2 = lang (string)
+    const params = btoa(
+      String.fromCharCode(0x0a, vb.length, ...vb, 0x12, lb.length, ...lb)
+    );
+    const gtRes = await fetch(
+      "https://www.youtube.com/youtubei/v1/get_transcript?prettyPrint=false",
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          context: {
+            client: {
+              clientName: "WEB",
+              clientVersion: "2.20241126.01.00",
+              hl: "en",
+              gl: "US",
+            },
+          },
+          params,
+        }),
+      }
+    );
+    if (gtRes.ok) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data: any = await gtRes.json();
+      const cueGroups =
+        data?.actions?.[0]?.updateEngagementPanelAction?.content
+          ?.transcriptRenderer?.body?.transcriptBodyRenderer?.cueGroups ?? [];
+      const gtSegments: TranscriptSegment[] = [];
+      for (const group of cueGroups) {
+        for (const cue of group?.transcriptCueGroupRenderer?.cues ?? []) {
+          const r = cue?.transcriptCueRenderer;
+          const text = (r?.cue?.simpleText ?? "").trim();
+          const start = parseInt(r?.startOffsetMs ?? "0", 10) / 1000;
+          const duration = parseInt(r?.durationMs ?? "0", 10) / 1000;
+          if (text) gtSegments.push({ text, start, duration });
+        }
+      }
+      if (gtSegments.length > 0) {
+        diag.steps.push({
+          label: "get_transcript API",
+          status: "ok",
+          detail: `${gtSegments.length} cues via Innertube get_transcript`,
+        });
+        return { segments: gtSegments, tracksLen: tracks.length, diagnostics: diag };
+      }
+    }
+    diag.steps.push({
+      label: "get_transcript API",
+      status: "warn",
+      detail: `status=${gtRes.status}, no cues — falling back to timedtext`,
+    });
+  } catch (err) {
+    diag.steps.push({
+      label: "get_transcript API",
+      status: "warn",
+      detail: `Error: ${err instanceof Error ? err.message : String(err)} — falling back to timedtext`,
+    });
+  }
+
+  // Step 5: Fetch transcript data via timedtext URL
   let segments: TranscriptSegment[];
   try {
     segments = await fetchTranscriptData(preferredTrack.baseUrl, diag);
@@ -206,19 +277,32 @@ export async function fetchTranscript(
  * All fetches go through the background service worker to bypass CORS.
  */
 async function fetchTranscriptData(baseUrl: string, diag: FetchDiagnostics): Promise<TranscriptSegment[]> {
-  // Pre-flight: warn if URL contains exp=xpe (POT token enforcement)
-  if (baseUrl.includes('exp=xpe') || baseUrl.includes('exp=xpv')) {
+  // Strip exp=xpe / exp=xpv — these flags enable Proof-of-Origin Token (POT)
+  // enforcement. Removing exp does NOT invalidate the URL signature (exp is not
+  // in sparams) but disables the POT check so the server returns real content.
+  const cleanBase = (() => {
+    try {
+      const u = new URL(baseUrl);
+      u.searchParams.delete("exp");
+      return u.toString();
+    } catch {
+      return baseUrl;
+    }
+  })();
+
+  if (baseUrl !== cleanBase) {
     diag.steps.push({
-      label: "⚠ POT token required",
-      status: "warn",
-      detail: "URL contains exp=xpe — YouTube requires Proof-of-Origin Token for this track. The Innertube ANDROID client should have avoided this.",
+      label: "Stripped exp param",
+      status: "ok",
+      detail: "Removed exp=xpe from timedtext URL to disable POT enforcement.",
     });
   }
 
-  // Attempt 1: JSON3 format via background worker
+  // Attempt 1: JSON3 format — fetch directly from content script so session
+  // cookies are included (required for timedtext URLs with session tokens).
   let json3Status = "skipped";
   try {
-    const json3Url = baseUrl + "&fmt=json3";
+    const json3Url = cleanBase + "&fmt=json3";
     const res = await fetch(json3Url, { credentials: "include", headers: { "Accept-Language": "en-US,en;q=0.9" } });
     const contentLength = res.headers.get("content-length") ?? "unknown";
     const body = await res.text();
@@ -265,10 +349,10 @@ async function fetchTranscriptData(baseUrl: string, diag: FetchDiagnostics): Pro
   }
   diag.steps.push({ label: "Fetch JSON3 transcript", status: "warn", detail: json3Status + " — falling back to XML" });
 
-  // Attempt 2: XML format
+  // Attempt 2: XML format — same direct fetch with session cookies
   let xmlStatus = "skipped";
   try {
-    const xmlRes = await fetch(baseUrl, { credentials: "include", headers: { "Accept-Language": "en-US,en;q=0.9" } });
+    const xmlRes = await fetch(cleanBase, { credentials: "include", headers: { "Accept-Language": "en-US,en;q=0.9" } });
     const xmlContentLength = xmlRes.headers.get("content-length") ?? "unknown";
     const xml = await xmlRes.text();
     diag.steps.push({

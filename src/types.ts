@@ -72,4 +72,5 @@ export interface ChatStreamPayload {
   model: string;
   apiKey: string;
   ollamaBaseUrl?: string;
+  tabId?: number;
 }

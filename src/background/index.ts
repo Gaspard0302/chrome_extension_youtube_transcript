@@ -4,8 +4,15 @@
  * and settings persistence via chrome.storage.sync.
  */
 
-import type { BackgroundMessage, Settings } from "../types";
+import type { BackgroundMessage, ChatStreamPayload, Settings } from "../types";
 import { DEFAULT_SETTINGS } from "../lib/providers";
+import { streamText } from "ai";
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createGroq } from "@ai-sdk/groq";
+import { createMistral } from "@ai-sdk/mistral";
+import { createOllama } from "ollama-ai-provider";
 
 chrome.runtime.onMessage.addListener(
   (message: BackgroundMessage, _sender, sendResponse) => {
@@ -24,7 +31,8 @@ chrome.runtime.onMessage.addListener(
     }
 
     if (message.type === "CHAT_STREAM") {
-      handleChatStream(message.payload, sendResponse);
+      const tabId = _sender.tab?.id;
+      handleChatStream({ ...message.payload, tabId }, sendResponse);
       return true;
     }
 
@@ -58,16 +66,28 @@ async function handleGetCaptionTracks(
 ) {
   // Use Innertube ANDROID client — returns baseUrl values without exp=xpe,
   // so no Proof-of-Origin Token is required.
-  const apiKey = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+  // No API key in the URL: the key parameter has been rate-limited/blocked.
+  // Android User-Agent is required; YouTube returns 403 without it.
   try {
     const res = await fetch(
-      `https://www.youtube.com/youtubei/v1/player?key=${apiKey}&prettyPrint=false`,
+      `https://www.youtube.com/youtubei/v1/player?prettyPrint=false`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+          'X-YouTube-Client-Name': '3',
+          'X-YouTube-Client-Version': '19.09.37',
+        },
         body: JSON.stringify({
           context: {
-            client: { clientName: 'ANDROID', clientVersion: '20.10.38' },
+            client: {
+              clientName: 'ANDROID',
+              clientVersion: '19.09.37',
+              androidSdkVersion: 30,
+              hl: 'en',
+              gl: 'US',
+            },
           },
           videoId,
         }),
@@ -109,54 +129,39 @@ async function handleFetchTranscriptUrl(
   }
 }
 
+/**
+ * Run streamText directly in the service worker and broadcast each chunk via
+ * chrome.runtime.sendMessage so all content scripts receive CHAT_CHUNK.
+ */
 async function handleChatStream(
-  payload: Extract<BackgroundMessage, { type: "CHAT_STREAM" }>["payload"],
+  payload: ChatStreamPayload & { tabId?: number },
   sendResponse: (response: unknown) => void
 ) {
-  const { messages, systemPrompt, provider, model, apiKey, ollamaBaseUrl } =
-    payload;
-
+  const { messages, systemPrompt, provider, model, apiKey, ollamaBaseUrl, tabId } = payload;
   try {
-    const { streamText } = await import("ai");
-    let providerInstance: ReturnType<typeof import("@ai-sdk/anthropic").createAnthropic> |
-      ReturnType<typeof import("@ai-sdk/openai").createOpenAI> |
-      ReturnType<typeof import("@ai-sdk/google").createGoogleGenerativeAI> |
-      ReturnType<typeof import("@ai-sdk/groq").createGroq> |
-      ReturnType<typeof import("@ai-sdk/mistral").createMistral> |
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      any;
-
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let providerInstance: any;
     switch (provider) {
-      case "anthropic": {
-        const { createAnthropic } = await import("@ai-sdk/anthropic");
+      case "anthropic":
         providerInstance = createAnthropic({ apiKey });
         break;
-      }
-      case "openai": {
-        const { createOpenAI } = await import("@ai-sdk/openai");
+      case "openai":
         providerInstance = createOpenAI({ apiKey });
         break;
-      }
-      case "google": {
-        const { createGoogleGenerativeAI } = await import("@ai-sdk/google");
+      case "google":
         providerInstance = createGoogleGenerativeAI({ apiKey });
         break;
-      }
-      case "groq": {
-        const { createGroq } = await import("@ai-sdk/groq");
+      case "groq":
         providerInstance = createGroq({ apiKey });
         break;
-      }
-      case "mistral": {
-        const { createMistral } = await import("@ai-sdk/mistral");
+      case "mistral":
         providerInstance = createMistral({ apiKey });
         break;
-      }
-      case "ollama": {
-        const { createOllama } = await import("ollama-ai-provider");
-        providerInstance = createOllama({ baseURL: ollamaBaseUrl + "/api" });
+      case "ollama":
+        providerInstance = createOllama({
+          baseURL: (ollamaBaseUrl ?? "http://localhost:11434") + "/api",
+        });
         break;
-      }
       default:
         sendResponse({ error: `Unknown provider: ${provider}` });
         return;
@@ -165,20 +170,18 @@ async function handleChatStream(
     const result = await streamText({
       model: providerInstance(model),
       system: systemPrompt,
-      messages: messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
     });
 
     let fullText = "";
     for await (const chunk of result.textStream) {
       fullText += chunk;
-      // Stream chunks back via runtime messages to the content script
-      chrome.runtime.sendMessage({
-        type: "CHAT_CHUNK",
-        payload: { chunk, fullText },
-      }).catch(() => {/* content script may not be listening yet */ });
+      if (tabId != null) {
+        chrome.tabs.sendMessage(tabId, {
+          type: "CHAT_CHUNK",
+          payload: { chunk, fullText },
+        }).catch(() => {});
+      }
     }
 
     sendResponse({ ok: true, fullText });
