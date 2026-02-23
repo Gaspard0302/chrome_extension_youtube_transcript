@@ -7,13 +7,15 @@ import {
 } from "../../lib/transcript";
 import type { FetchDiagnostics } from "../../lib/transcript";
 import { embedSegments } from "../../lib/embeddings";
+import { setSegments } from "../../lib/segment-store";
 import type { EmbeddedSegment, Settings, TranscriptSegment } from "../../types";
 import { DEFAULT_SETTINGS } from "../../lib/providers";
 import ChatTab from "./ChatTab";
 import TranscriptTab from "./TranscriptTab";
 import DetailsTab from "./DetailsTab";
+import TimelineTab from "./TimelineTab";
 
-type Tab = "transcript" | "chat" | "details";
+type Tab = "transcript" | "chat" | "timeline" | "details";
 type LoadState = "idle" | "fetching" | "embedding" | "ready" | "error";
 
 interface Props {
@@ -109,6 +111,7 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
   const tabs: { id: Tab; label: string }[] = [
     { id: "transcript", label: "Transcript" },
     { id: "chat", label: "AI Chat" },
+    { id: "timeline", label: "Timeline" },
     { id: "details", label: "Details" },
   ];
 
@@ -116,6 +119,12 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
     embeddedSegments.length > 0
       ? embeddedSegments
       : rawSegments.map((s, i) => ({ ...s, embedding: [], index: i }));
+
+  // Keep the shared segment store in sync so SEARCH_REQUEST handlers in
+  // content/index.tsx can run searches on behalf of the background worker.
+  useEffect(() => {
+    setSegments(embeddedOrRaw);
+  }, [embeddedOrRaw]);
 
   const trigger = (
     <button
@@ -362,6 +371,13 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
                 segments={rawSegments}
                 settings={settings}
                 onSettingsChange={handleSettingsChange}
+                videoId={videoIdRef.current}
+              />
+            )}
+            {tab === "timeline" && (
+              <TimelineTab
+                segments={rawSegments}
+                settings={settings}
               />
             )}
             {tab === "details" && (

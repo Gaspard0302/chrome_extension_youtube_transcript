@@ -26,14 +26,14 @@
   "content_scripts": [
     {
       "js": [
-        "assets/index.tsx-loader-DgAv1kez.js"
+        "assets/index.tsx-loader-ByjcXmqp.js"
       ],
       "matches": [
         "https://www.youtube.com/watch*"
       ],
       "run_at": "document_idle",
       "css": [
-        "assets/index-DXphHCXD.css"
+        "assets/index-CMxB8zIV.css"
       ]
     }
   ],
@@ -57,9 +57,9 @@
       ],
       "resources": [
         "assets/*",
-        "assets/client-B2dwjR_T.js",
-        "assets/providers-DGP2A9J8.js",
-        "assets/index.tsx-QKEIkRcq.js"
+        "assets/client-B-OClMmu.js",
+        "assets/providers-B-uW_wjG.js",
+        "assets/index.tsx-DsFEnjow.js"
       ],
       "use_dynamic_url": false
     }

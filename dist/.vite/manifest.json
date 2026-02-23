@@ -5,20 +5,23 @@
     "src": "../../../../../@crx/manifest",
     "isEntry": true
   },
-  "_client-B2dwjR_T.js": {
-    "file": "assets/client-B2dwjR_T.js",
-    "name": "client"
+  "_client-B-OClMmu.js": {
+    "file": "assets/client-B-OClMmu.js",
+    "name": "client",
+    "imports": [
+      "_providers-B-uW_wjG.js"
+    ]
   },
   "_modulepreload-polyfill-B5Qt9EMX.js": {
     "file": "assets/modulepreload-polyfill-B5Qt9EMX.js",
     "name": "modulepreload-polyfill"
   },
-  "_providers-DGP2A9J8.js": {
-    "file": "assets/providers-DGP2A9J8.js",
+  "_providers-B-uW_wjG.js": {
+    "file": "assets/providers-B-uW_wjG.js",
     "name": "providers"
   },
   "index.tsx-loader.js": {
-    "file": "assets/index.tsx-loader-DgAv1kez.js",
+    "file": "assets/index.tsx-loader-ByjcXmqp.js",
     "src": "index.tsx-loader.js"
   },
   "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm": {
@@ -26,25 +29,25 @@
     "src": "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm"
   },
   "src/background/index.ts": {
-    "file": "assets/index.ts-Bh1QGRMg.js",
+    "file": "assets/index.ts-D_0Phc6O.js",
     "name": "index.ts",
     "src": "src/background/index.ts",
     "isEntry": true,
     "imports": [
-      "_providers-DGP2A9J8.js"
+      "_providers-B-uW_wjG.js"
     ]
   },
   "src/content/index.tsx": {
-    "file": "assets/index.tsx-QKEIkRcq.js",
+    "file": "assets/index.tsx-DsFEnjow.js",
     "name": "index.tsx",
     "src": "src/content/index.tsx",
     "isEntry": true,
     "imports": [
-      "_client-B2dwjR_T.js",
-      "_providers-DGP2A9J8.js"
+      "_client-B-OClMmu.js",
+      "_providers-B-uW_wjG.js"
     ],
     "css": [
-      "assets/index-DXphHCXD.css"
+      "assets/index-CMxB8zIV.css"
     ]
   },
   "src/offscreen/index.html": {
@@ -60,14 +63,14 @@
     ]
   },
   "src/popup/index.html": {
-    "file": "assets/popup-DPDlMXNg.js",
+    "file": "assets/popup-jUKklwQt.js",
     "name": "popup",
     "src": "src/popup/index.html",
     "isEntry": true,
     "imports": [
       "_modulepreload-polyfill-B5Qt9EMX.js",
-      "_client-B2dwjR_T.js",
-      "_providers-DGP2A9J8.js"
+      "_client-B-OClMmu.js",
+      "_providers-B-uW_wjG.js"
     ]
   }
 }

@@ -5,6 +5,12 @@
   }
 }
 
+/* Skeleton pulse animation for timeline loading placeholders */
+@keyframes yt-transcript-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.9; }
+}
+
 /* Scoped button/input resets to prevent YouTube global styles from leaking */
 .yt-transcript-ext button,
 .yt-transcript-ext input,

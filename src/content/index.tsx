@@ -5,6 +5,10 @@ import Panel from "./components/Panel";
 import "./content.css";
 import { waitForDOMNodes } from "../lib/youtube-dom";
 import type { PanelMode } from "../lib/youtube-dom";
+import { getSegments } from "../lib/segment-store";
+import { exactSearch, hybridSearch } from "../lib/search";
+import { formatTimestamp } from "../lib/transcript";
+import type { SearchResult } from "../types";
 
 let reactRoot: Root | null = null;
 let appHost: HTMLElement | null = null;
@@ -85,6 +89,52 @@ function waitForPlayerThenDOM() {
   });
   playerObserver.observe(document.body, { childList: true, subtree: true });
 }
+
+// ---------------------------------------------------------------------------
+// SEARCH_REQUEST — background asks content script to search the loaded segments.
+// Used by the agentic chat tool (search_transcript).
+// ---------------------------------------------------------------------------
+chrome.runtime.onMessage.addListener(
+  (
+    msg: { type: string; payload?: { query: string } },
+    _sender,
+    sendResponse
+  ) => {
+    if (msg.type !== "SEARCH_REQUEST") return false;
+
+    const query = msg.payload?.query ?? "";
+    const segments = getSegments();
+
+    if (!segments.length) {
+      sendResponse({ results: "No transcript loaded yet." });
+      return false;
+    }
+
+    function formatResults(results: SearchResult[]): string {
+      if (!results.length) return "No matching segments found.";
+      return results
+        .map((r) => `[${formatTimestamp(r.segment.start)}] ${r.segment.text}`)
+        .join("\n");
+    }
+
+    const hasEmbeddings = segments.some((s) => s.embedding.length > 0);
+    if (hasEmbeddings) {
+      hybridSearch(query, segments, 15)
+        .then((results) => {
+          sendResponse({ results: formatResults(results) });
+        })
+        .catch(() => {
+          const fallback = exactSearch(query, segments).slice(0, 15);
+          sendResponse({ results: formatResults(fallback) });
+        });
+      return true; // async
+    }
+
+    const results = exactSearch(query, segments).slice(0, 15);
+    sendResponse({ results: formatResults(results) });
+    return false;
+  }
+);
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", waitForPlayerThenDOM);

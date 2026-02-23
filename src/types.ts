@@ -57,13 +57,28 @@ export interface Settings {
   semanticSearchEnabled: boolean;
 }
 
+export interface TimelineInputBlock {
+  startTime: number;
+  endTime: number;
+  text: string; // transcript sample for AI
+}
+
+export interface TimelinePayload {
+  blocks: TimelineInputBlock[];
+  provider: ProviderId;
+  model: string;
+  apiKey: string;
+  ollamaBaseUrl?: string;
+}
+
 export type BackgroundMessage =
   | { type: "CHAT_STREAM"; payload: ChatStreamPayload }
   | { type: "GET_SETTINGS" }
   | { type: "SAVE_SETTINGS"; payload: Partial<Settings> }
   | { type: "GET_CAPTION_TRACKS"; payload: { videoId: string } }
   | { type: "FETCH_TRANSCRIPT_URL"; payload: { url: string } }
-  | { type: "EMBED_TEXT"; payload: { text: string } };
+  | { type: "EMBED_TEXT"; payload: { text: string } }
+  | { type: "GENERATE_TIMELINE"; payload: TimelinePayload };
 
 export interface ChatStreamPayload {
   messages: { role: "user" | "assistant"; content: string }[];

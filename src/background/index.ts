@@ -4,9 +4,9 @@
  * and settings persistence via chrome.storage.sync.
  */
 
-import type { BackgroundMessage, ChatStreamPayload, Settings } from "../types";
+import type { BackgroundMessage, ChatStreamPayload, Settings, TimelinePayload } from "../types";
 import { DEFAULT_SETTINGS } from "../lib/providers";
-import { streamText } from "ai";
+import { streamText, generateText, jsonSchema, tool } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
@@ -48,6 +48,11 @@ chrome.runtime.onMessage.addListener(
 
     if (message.type === "EMBED_TEXT") {
       handleEmbedText(message.payload.text, sendResponse);
+      return true;
+    }
+
+    if (message.type === "GENERATE_TIMELINE") {
+      handleGenerateTimeline(message.payload, sendResponse);
       return true;
     }
   }
@@ -129,9 +134,28 @@ async function handleFetchTranscriptUrl(
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildProviderInstance(
+  provider: string,
+  apiKey: string,
+  ollamaBaseUrl?: string
+): unknown {
+  switch (provider) {
+    case "anthropic": return createAnthropic({ apiKey });
+    case "openai": return createOpenAI({ apiKey });
+    case "google": return createGoogleGenerativeAI({ apiKey });
+    case "groq": return createGroq({ apiKey });
+    case "mistral": return createMistral({ apiKey });
+    case "ollama": return createOllama({ baseURL: (ollamaBaseUrl ?? "http://localhost:11434") + "/api" });
+    default: return null;
+  }
+}
+
 /**
- * Run streamText directly in the service worker and broadcast each chunk via
- * chrome.runtime.sendMessage so all content scripts receive CHAT_CHUNK.
+ * Agentic RAG chat: the model can call search_transcript up to 3 times
+ * (maxSteps=4 = 3 tool calls + 1 final text generation).
+ * Each tool call is forwarded to the content script via tabs.sendMessage.
+ * Text chunks stream to the content script via CHAT_CHUNK.
  */
 async function handleChatStream(
   payload: ChatStreamPayload & { tabId?: number },
@@ -140,47 +164,78 @@ async function handleChatStream(
   const { messages, systemPrompt, provider, model, apiKey, ollamaBaseUrl, tabId } = payload;
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let providerInstance: any;
-    switch (provider) {
-      case "anthropic":
-        providerInstance = createAnthropic({ apiKey });
-        break;
-      case "openai":
-        providerInstance = createOpenAI({ apiKey });
-        break;
-      case "google":
-        providerInstance = createGoogleGenerativeAI({ apiKey });
-        break;
-      case "groq":
-        providerInstance = createGroq({ apiKey });
-        break;
-      case "mistral":
-        providerInstance = createMistral({ apiKey });
-        break;
-      case "ollama":
-        providerInstance = createOllama({
-          baseURL: (ollamaBaseUrl ?? "http://localhost:11434") + "/api",
-        });
-        break;
-      default:
-        sendResponse({ error: `Unknown provider: ${provider}` });
-        return;
+    const providerInstance = buildProviderInstance(provider, apiKey, ollamaBaseUrl) as any;
+    if (!providerInstance) {
+      sendResponse({ error: `Unknown provider: ${provider}` });
+      return;
     }
+
+    // Tool: search the transcript (executed by content script which holds the segments)
+    const searchTranscriptTool = tool({
+      description:
+        "Search the video transcript for segments relevant to a query. " +
+        "Returns up to 15 matching transcript snippets with timestamps. " +
+        "Use up to 3 times with different queries to gather all necessary context.",
+      parameters: jsonSchema<{ query: string }>({
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "The search query to find relevant transcript segments",
+          },
+        },
+        required: ["query"],
+      }),
+      execute: async ({ query }: { query: string }): Promise<string> => {
+        if (tabId == null) return "Search unavailable (no tab context).";
+        return new Promise<string>((resolve) => {
+          chrome.tabs.sendMessage(
+            tabId,
+            { type: "SEARCH_REQUEST", payload: { query } },
+            (response: { results: string } | undefined) => {
+              if (chrome.runtime.lastError || !response) {
+                resolve("No results found for this query.");
+              } else {
+                resolve(response.results);
+              }
+            }
+          );
+        });
+      },
+    });
 
     const result = await streamText({
       model: providerInstance(model),
       system: systemPrompt,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      tools: { search_transcript: searchTranscriptTool },
+      maxSteps: 4, // up to 3 tool calls + 1 final text step
     });
 
     let fullText = "";
-    for await (const chunk of result.textStream) {
-      fullText += chunk;
-      if (tabId != null) {
-        chrome.tabs.sendMessage(tabId, {
-          type: "CHAT_CHUNK",
-          payload: { chunk, fullText },
-        }).catch(() => {});
+    for await (const part of result.fullStream) {
+      if (
+        part.type === "tool-call" &&
+        part.toolName === "search_transcript" &&
+        tabId != null
+      ) {
+        // Notify UI that a search is in progress
+        chrome.tabs
+          .sendMessage(tabId, {
+            type: "CHAT_SEARCHING",
+            payload: { query: (part.args as { query: string }).query },
+          })
+          .catch(() => {});
+      } else if (part.type === "text-delta") {
+        fullText += part.textDelta;
+        if (tabId != null) {
+          chrome.tabs
+            .sendMessage(tabId, {
+              type: "CHAT_CHUNK",
+              payload: { chunk: part.textDelta, fullText },
+            })
+            .catch(() => {});
+        }
       }
     }
 
@@ -188,6 +243,79 @@ async function handleChatStream(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     sendResponse({ error: message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Timeline generation — batch-generate short titles for video segments.
+// ---------------------------------------------------------------------------
+
+function fmtTs(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0)
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+async function handleGenerateTimeline(
+  payload: TimelinePayload,
+  sendResponse: (r: unknown) => void
+) {
+  const { blocks, provider, model, apiKey, ollamaBaseUrl } = payload;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const providerInstance = buildProviderInstance(provider, apiKey, ollamaBaseUrl) as any;
+    if (!providerInstance) {
+      sendResponse({ error: `Unknown provider: ${provider}` });
+      return;
+    }
+
+    const blockDescriptions = blocks
+      .map(
+        (b, i) =>
+          `Block ${i + 1} [${fmtTs(b.startTime)} – ${fmtTs(b.endTime)}]:\n${b.text}`
+      )
+      .join("\n\n");
+
+    const result = await generateText({
+      model: providerInstance(model),
+      system:
+        "You are analyzing a YouTube video transcript. " +
+        "For each given segment, provide a short, descriptive title (4–7 words) capturing the main topic. " +
+        "Return ONLY a valid JSON array of strings, one per segment, in order. No other text, no markdown fences.",
+      messages: [
+        {
+          role: "user",
+          content: `Generate titles for these ${blocks.length} video segments:\n\n${blockDescriptions}`,
+        },
+      ],
+    });
+
+    let titles: string[];
+    try {
+      titles = JSON.parse(result.text.trim());
+    } catch {
+      // Try to extract an array embedded in the text
+      const m = result.text.match(/\[[\s\S]+\]/);
+      try {
+        titles = m ? JSON.parse(m[0]) : [];
+      } catch {
+        titles = [];
+      }
+    }
+
+    // Ensure correct length
+    while (titles.length < blocks.length)
+      titles.push(`Segment ${titles.length + 1}`);
+    titles = titles.slice(0, blocks.length);
+
+    sendResponse({ titles });
+  } catch (err) {
+    sendResponse({
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
