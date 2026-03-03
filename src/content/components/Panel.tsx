@@ -31,6 +31,7 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
   const [embeddedSegments, setEmbeddedSegments] = useState<EmbeddedSegment[]>(
     []
   );
+  const [copied, setCopied] = useState(false);
   const [settings, setSettings] = useState<Settings>(
     DEFAULT_SETTINGS as Settings
   );
@@ -93,6 +94,21 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
       setErrorMsg("Failed to load transcript.");
       setLoadState("error");
     }
+  }
+
+  function copyTranscript() {
+    const text = rawSegments
+      .map((s, i) => {
+        const mins = Math.floor(s.start / 60);
+        const secs = Math.floor(s.start % 60);
+        const ts = `${mins}:${String(secs).padStart(2, "0")}`;
+        return `[${ts}] ${s.text}`;
+      })
+      .join("\n");
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
   }
 
   const tabs: { id: Tab; label: string }[] = [
@@ -176,7 +192,7 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
         <div
           style={{
             display: "flex",
-            alignItems: "center",
+            alignItems: "flex-start",
             gap: "8px",
             marginBottom: "12px",
           }}
@@ -201,11 +217,11 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
             {loadState === "embedding" && `Embedding… ${loadProgress}%`}
             {loadState === "fetching" && "Fetching…"}
           </span>
+
           <button
             onClick={() => setOpen(false)}
             title="Close"
             style={{
-              marginLeft: 8,
               background: "transparent",
               border: "none",
               color: "var(--yt-spec-text-secondary, #aaa)",
@@ -228,6 +244,7 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
             gap: "8px",
             paddingBottom: "12px",
             flexWrap: "wrap",
+            alignItems: "center",
           }}
         >
           {tabs.map((t) => (
@@ -268,6 +285,35 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
               {t.label}
             </button>
           ))}
+          {loadState === "ready" && (
+            <button
+              type="button"
+              onClick={copyTranscript}
+              title="Copy transcript"
+              style={{
+                marginLeft: "auto",
+                background: "transparent",
+                border: "none",
+                color: copied ? "#4ade80" : "var(--yt-spec-text-secondary, #aaa)",
+                cursor: "pointer",
+                padding: "0 2px",
+                display: "flex",
+                alignItems: "center",
+                flexShrink: 0,
+                transition: "color 0.15s",
+              }}
+            >
+              {copied ? (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                </svg>
+              ) : (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+                </svg>
+              )}
+            </button>
+          )}
         </div>
       </div>
 

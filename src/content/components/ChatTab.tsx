@@ -13,16 +13,6 @@ interface Props {
 // Markdown + timestamp renderer
 // ---------------------------------------------------------------------------
 
-function parseTimestampToSeconds(part: string): number | null {
-  const m = part.match(/^\[(\d+):(\d{2})(?::(\d{2}))?\]$/);
-  if (!m) return null;
-  const h = m[3] !== undefined ? parseInt(m[1], 10) : 0;
-  const min =
-    m[3] !== undefined ? parseInt(m[2], 10) : parseInt(m[1], 10);
-  const sec =
-    m[3] !== undefined ? parseInt(m[3], 10) : parseInt(m[2], 10);
-  return h * 3600 + min * 60 + sec;
-}
 
 function parseInline(
   text: string,
@@ -31,35 +21,40 @@ function parseInline(
 ): React.ReactNode[] {
   // Combined regex: timestamps, bold, italic, inline code
   const re =
-    /(\[\d+:\d{2}(?::\d{2})?\]|\*\*(?:[^*]|\*(?!\*))+?\*\*|\*[^*\n]+?\*|`[^`\n]+`)/g;
+    /(\[\d+:\d{2}(?::\d{2})?(?:,\s*\d+:\d{2}(?::\d{2})?)*\]|\*\*(?:[^*]|\*(?!\*))+?\*\*|\*[^*\n]+?\*|`[^`\n]+`)/g;
   const parts = text.split(re);
   return parts.map((part, i) => {
     const key = `${keyPrefix}-${i}`;
-    const secs = parseTimestampToSeconds(part);
-    if (secs !== null) {
-      return (
-        <button
-          key={key}
-          type="button"
-          onClick={() => jumpTo(secs)}
-          style={{
-            background:
-              "var(--yt-spec-general-background-a, rgba(0,0,0,0.4))",
-            border:
-              "1px solid var(--yt-spec-10-percent-layer, rgba(255,255,255,0.15))",
-            borderRadius: 4,
-            color: "var(--yt-spec-call-to-action-inverse-color, #ff0000)",
-            cursor: "pointer",
-            fontSize: 12,
-            fontWeight: 700,
-            padding: "1px 6px",
-            margin: "0 2px",
-            fontFamily: "inherit",
-          }}
-        >
-          {part}
-        </button>
-      );
+    if (part.startsWith("[") && part.endsWith("]")) {
+      const firstTs = part.slice(1, -1).split(/,\s*/)[0].trim();
+      const m = firstTs.match(/^(\d+):(\d{2})(?::(\d{2}))?$/);
+      if (m) {
+        const h = m[3] !== undefined ? parseInt(m[1], 10) : 0;
+        const min = m[3] !== undefined ? parseInt(m[2], 10) : parseInt(m[1], 10);
+        const sec = m[3] !== undefined ? parseInt(m[3], 10) : parseInt(m[2], 10);
+        const secs = h * 3600 + min * 60 + sec;
+        return (
+          <button
+            key={key}
+            type="button"
+            onClick={() => jumpTo(secs)}
+            style={{
+              background: "var(--yt-spec-general-background-a, rgba(0,0,0,0.4))",
+              border: "1px solid var(--yt-spec-10-percent-layer, rgba(255,255,255,0.15))",
+              borderRadius: 4,
+              color: "#ff0000",
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 700,
+              padding: "1px 6px",
+              margin: "0 2px",
+              fontFamily: "inherit",
+            }}
+          >
+            {part}
+          </button>
+        );
+      }
     }
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
       return (

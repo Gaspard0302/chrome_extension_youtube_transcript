@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { EmbeddedSegment, Settings } from "../../types";
 import { PROVIDERS } from "../../lib/providers";
-import { formatTimestamp } from "../../lib/transcript";
+import { formatTimestamp, getYouTubeChapters } from "../../lib/transcript";
 
 // ---------------------------------------------------------------------------
 // Segmentation helpers
@@ -154,6 +154,22 @@ function groupIntoBlocks(segs: EmbeddedSegment[]): {
   return { blocks: timeBasedGrouping(segs), method: "time" };
 }
 
+function chaptersToBlocks(
+  chapters: { title: string; startTime: number }[],
+  segs: EmbeddedSegment[],
+  totalDuration: number
+): TimelineBlock[] {
+  return chapters.map((ch, i) => {
+    const endTime = chapters[i + 1]?.startTime ?? totalDuration;
+    return {
+      startTime: ch.startTime,
+      endTime,
+      title: ch.title,
+      segments: segs.filter(s => s.start >= ch.startTime && s.start < endTime),
+    };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Cache helpers  (localStorage, keyed by videoId + method)
 // ---------------------------------------------------------------------------
@@ -206,6 +222,8 @@ export default function TimelineTab({ segments, settings, videoId }: Props) {
   const [segMethod, setSegMethod] = useState<"semantic" | "time">("time");
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState("");
+  const [ytChapters, setYtChapters] = useState<TimelineBlock[] | null>(null);
+  const [source, setSource] = useState<"chapters" | "ai">("ai");
   const hasGeneratedRef = useRef(false);
 
   const availableProviders = PROVIDERS.filter(
@@ -220,6 +238,19 @@ export default function TimelineTab({ segments, settings, videoId }: Props) {
     const { blocks: newBlocks, method } = groupIntoBlocks(segments);
     setSegMethod(method);
     hasGeneratedRef.current = false;
+
+    // Detect YouTube creator chapters
+    const rawChapters = getYouTubeChapters();
+    if (rawChapters) {
+      const totalDuration = segments[segments.length - 1].start +
+        (segments[segments.length - 1].duration || 0);
+      const chBlocks = chaptersToBlocks(rawChapters, segments, totalDuration);
+      setYtChapters(chBlocks);
+      setSource("chapters"); // default to YouTube chapters when available
+    } else {
+      setYtChapters(null);
+      setSource("ai");
+    }
 
     // Try to restore cached titles for this video + method
     if (videoId) {
@@ -241,17 +272,13 @@ export default function TimelineTab({ segments, settings, videoId }: Props) {
 
   // Auto-generate titles once blocks are ready and a provider is available
   useEffect(() => {
-    if (
-      blocks.length > 0 &&
-      hasProvider &&
-      !hasGeneratedRef.current &&
-      !generating
-    ) {
+    if (source === "chapters") return; // chapters need no AI
+    if (blocks.length > 0 && hasProvider && !hasGeneratedRef.current && !generating) {
       hasGeneratedRef.current = true;
       generateTitles(blocks);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blocks.length, hasProvider]);
+  }, [blocks.length, hasProvider, source]);
 
   async function generateTitles(currentBlocks: TimelineBlock[]) {
     setGenerating(true);
@@ -305,6 +332,8 @@ export default function TimelineTab({ segments, settings, videoId }: Props) {
     }
   }
 
+  const displayBlocks = source === "chapters" && ytChapters ? ytChapters : blocks;
+
   if (!segments.length) {
     return (
       <div
@@ -348,19 +377,21 @@ export default function TimelineTab({ segments, settings, videoId }: Props) {
               color: "var(--yt-spec-text-secondary, #aaa)",
             }}
           >
-            {blocks.length} segments
-            {generating && " · generating titles…"}
+            {displayBlocks.length} {source === "chapters" ? "chapters" : "segments"}
+            {source === "ai" && generating && " · generating titles…"}
           </span>
-          <span
-            style={{
-              fontSize: 10,
-              color: "var(--yt-spec-text-secondary, #666)",
-              marginLeft: 6,
-            }}
-          >
-            {segMethod === "semantic" ? "· semantic" : "· time-based"}
-          </span>
-          {!hasProvider && (
+          {source === "ai" && (
+            <span
+              style={{
+                fontSize: 10,
+                color: "var(--yt-spec-text-secondary, #666)",
+                marginLeft: 6,
+              }}
+            >
+              · {segMethod === "semantic" ? "semantic" : "time-based"}
+            </span>
+          )}
+          {source === "ai" && !hasProvider && (
             <span
               style={{
                 fontSize: 11,
@@ -372,31 +403,31 @@ export default function TimelineTab({ segments, settings, videoId }: Props) {
             </span>
           )}
         </div>
-        {hasProvider && !generating && (
-          <button
-            type="button"
-            onClick={() => {
-              // Clear cache so fresh titles are saved after regeneration
-              if (videoId) {
-                try { localStorage.removeItem(cacheKey(videoId, segMethod)); } catch { /* */ }
-              }
-              hasGeneratedRef.current = true;
-              generateTitles(blocks);
-            }}
-            style={{
-              background: "transparent",
-              border:
-                "1px solid var(--yt-spec-10-percent-layer, rgba(255,255,255,0.2))",
-              borderRadius: 12,
-              color: "var(--yt-spec-text-secondary, #aaa)",
-              cursor: "pointer",
-              fontSize: 11,
-              padding: "3px 10px",
-              fontFamily: "inherit",
-            }}
-          >
-            Regenerate
-          </button>
+        {ytChapters !== null && hasProvider && (
+          <div style={{ display: "flex", borderRadius: 12, overflow: "hidden",
+            border: "1px solid var(--yt-spec-10-percent-layer, rgba(255,255,255,0.2))" }}>
+            {(["chapters", "ai"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setSource(s)}
+                style={{
+                  background: source === s
+                    ? "var(--yt-spec-call-to-action-inverse-color, #ff0000)"
+                    : "transparent",
+                  border: "none",
+                  color: source === s ? "#fff" : "var(--yt-spec-text-secondary, #aaa)",
+                  cursor: "pointer",
+                  fontSize: 11,
+                  padding: "3px 10px",
+                  fontFamily: "inherit",
+                  transition: "background 0.15s",
+                }}
+              >
+                {s === "chapters" ? "YouTube" : "AI"}
+              </button>
+            ))}
+          </div>
         )}
       </div>
 
@@ -418,8 +449,8 @@ export default function TimelineTab({ segments, settings, videoId }: Props) {
         className="yt-transcript-scrollable"
         style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}
       >
-        {blocks.map((block, idx) => {
-          const isLoading = generating && block.title === null;
+        {displayBlocks.map((block, idx) => {
+          const isLoading = source === "ai" && generating && block.title === null;
           const durationSecs = block.endTime - block.startTime;
           const durationMins = (durationSecs / 60).toFixed(1);
 
@@ -463,7 +494,7 @@ export default function TimelineTab({ segments, settings, videoId }: Props) {
                     flexShrink: 0,
                   }}
                 />
-                {idx < blocks.length - 1 && (
+                {idx < displayBlocks.length - 1 && (
                   <div
                     style={{
                       width: 2,

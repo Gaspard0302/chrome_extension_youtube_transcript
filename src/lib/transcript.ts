@@ -474,6 +474,66 @@ export function chunkTranscript(
   return chunks;
 }
 
+export interface YouTubeChapter {
+  title: string;
+  startTime: number; // seconds
+}
+
+/**
+ * Extract creator-defined chapters from ytInitialData embedded in the page.
+ * Returns null if no chapters are found (video has none, or parsing failed).
+ */
+export function getYouTubeChapters(): YouTubeChapter[] | null {
+  for (const script of document.querySelectorAll<HTMLScriptElement>("script")) {
+    const text = script.textContent ?? "";
+    const marker = "var ytInitialData = ";
+    const start = text.indexOf(marker);
+    if (start === -1) continue;
+
+    // Extract the JSON object via bracket + string-literal counting
+    const jsonStart = start + marker.length;
+    if (text[jsonStart] !== "{") continue;
+    let depth = 0, inStr = false, esc = false, end = jsonStart;
+    for (; end < text.length; end++) {
+      const c = text[end];
+      if (esc) { esc = false; continue; }
+      if (c === "\\" && inStr) { esc = true; continue; }
+      if (c === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (c === "{") depth++;
+      else if (c === "}") { depth--; if (depth === 0) { end++; break; } }
+    }
+
+    let data: unknown;
+    try { data = JSON.parse(text.slice(jsonStart, end)); } catch { continue; }
+
+    // Navigate to chapters via player overlay markers
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const d = data as any;
+    const markersMap = d?.playerOverlays
+      ?.playerOverlayRenderer
+      ?.decoratedPlayerBarRenderer
+      ?.decoratedPlayerBarRenderer
+      ?.playerBar
+      ?.multiMarkersPlayerBarRenderer
+      ?.markersMap;
+
+    if (Array.isArray(markersMap)) {
+      for (const entry of markersMap) {
+        const chapters = entry?.value?.chapters;
+        if (!Array.isArray(chapters) || chapters.length === 0) continue;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result: YouTubeChapter[] = chapters.map((ch: any) => ({
+          title: ch?.chapterRenderer?.title?.simpleText ?? "",
+          startTime: (ch?.chapterRenderer?.timeRangeStartMillis ?? 0) / 1000,
+        })).filter((ch: YouTubeChapter) => ch.title.length > 0);
+        if (result.length > 0) return result;
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Format seconds into MM:SS or HH:MM:SS
  */
