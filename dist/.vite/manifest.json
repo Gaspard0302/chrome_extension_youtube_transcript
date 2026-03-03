@@ -1,6 +1,6 @@
 {
   "../../../../../@crx/manifest": {
-    "file": "assets/crx-manifest.js-CAGlX-S_.js",
+    "file": "assets/crx-manifest.js-DFeye4ku.js",
     "name": "crx-manifest.js",
     "src": "../../../../../@crx/manifest",
     "isEntry": true
@@ -21,7 +21,7 @@
     "name": "providers"
   },
   "index.tsx-loader.js": {
-    "file": "assets/index.tsx-loader-BxANPd2f.js",
+    "file": "assets/index.tsx-loader-D_-Cg8CF.js",
     "src": "index.tsx-loader.js"
   },
   "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm": {
@@ -29,7 +29,7 @@
     "src": "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm"
   },
   "src/background/index.ts": {
-    "file": "assets/index.ts-D_0Phc6O.js",
+    "file": "assets/index.ts-C3V8OhiZ.js",
     "name": "index.ts",
     "src": "src/background/index.ts",
     "isEntry": true,
@@ -38,7 +38,7 @@
     ]
   },
   "src/content/index.tsx": {
-    "file": "assets/index.tsx-Cd_RvTc6.js",
+    "file": "assets/index.tsx-CLy65nkT.js",
     "name": "index.tsx",
     "src": "src/content/index.tsx",
     "isEntry": true,
