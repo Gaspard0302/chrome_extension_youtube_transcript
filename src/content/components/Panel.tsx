@@ -4,6 +4,7 @@ import {
   extractVideoId,
   fetchTranscript,
   chunkTranscript,
+  formatTimestamp,
 } from "../../lib/transcript";
 import { embedSegments } from "../../lib/embeddings";
 import { setSegments } from "../../lib/segment-store";
@@ -98,16 +99,13 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
 
   function copyTranscript() {
     const text = rawSegments
-      .map((s, i) => {
-        const mins = Math.floor(s.start / 60);
-        const secs = Math.floor(s.start % 60);
-        const ts = `${mins}:${String(secs).padStart(2, "0")}`;
-        return `[${ts}] ${s.text}`;
-      })
+      .map((s) => `[${formatTimestamp(s.start)}] ${s.text}`)
       .join("\n");
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      // Clipboard access denied or not available — silently ignore
     });
   }
 

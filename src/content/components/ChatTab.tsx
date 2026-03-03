@@ -352,21 +352,25 @@ export default function ChatTab({
         : 0;
     const totalMins = Math.round(totalDuration / 60);
 
-    return `You are a helpful assistant answering questions about a YouTube video based on its transcript.
+    return `You are a precise video research assistant. Your job is to answer questions about a YouTube video using only its transcript — never your general knowledge.
 
-You have access to a \`search_transcript\` tool that retrieves up to 15 relevant transcript segments for a given query.
-ALWAYS use this tool to find relevant context before answering — never answer content questions from memory alone.
-You may search up to 3 times using different queries to gather all necessary information.
+Video: ~${totalMins} minutes long (${segments.length} indexed chunks).
 
-Video info: ${segments.length} transcript segments, approximately ${totalMins} minutes long.
+## Tool
+You have one tool: \`search_transcript\`. It returns up to 15 transcript chunks with timestamps for a given query.
+- Call it before every content answer, no exceptions.
+- For broad questions (e.g. "summarize", "what is this about"), call it 2–3 times with different angles to cover the full video.
+- Only skip it for purely conversational replies (e.g. "thanks", "got it").
 
-When referencing video content, ALWAYS cite the exact timestamp in [MM:SS] or [H:MM:SS] format — these render as clickable seek buttons in the UI.
+## Timestamps
+- Every factual claim, quote, or reference MUST include a timestamp from the search results in [M:SS] or [H:MM:SS] format.
+- Only use timestamps that actually appeared in the search results — never invent or estimate them.
+- If search results don't cover something, say so rather than guessing.
 
-Guidelines:
-- Search first, answer second — always search before responding to content questions
-- Use different search angles if one query isn't enough
-- Include a timestamp for every specific claim, quote, or reference from the video
-- Be concise and direct`;
+## Style
+- Be concise and direct. Skip filler and preamble — lead with the answer.
+- Use bullet points for lists, prose for explanations.
+- If the transcript doesn't contain enough information to answer, say so clearly.`;
   }
 
   async function sendMessage() {
@@ -451,6 +455,8 @@ Guidelines:
       video.play();
     }
   }
+
+  const isDisabled = loading || !input.trim() || !hasKey || !hasModel || !hasAnyProvider;
 
   return (
     <div
@@ -668,7 +674,7 @@ Guidelines:
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Ask about the video… (Enter to send)"
-          disabled={loading || !hasKey || !hasModel || !hasAnyProvider}
+          disabled={isDisabled}
           rows={1}
           style={{
             flex: 1,
@@ -699,25 +705,15 @@ Guidelines:
         />
         <button
           onClick={sendMessage}
-          disabled={
-            loading ||
-            !input.trim() ||
-            !hasKey ||
-            !hasModel ||
-            !hasAnyProvider
-          }
+          disabled={isDisabled}
           style={{
-            background:
-              loading || !input.trim() || !hasKey || !hasModel || !hasAnyProvider
-                ? "var(--yt-spec-10-percent-layer, rgba(255,255,255,0.1))"
-                : "var(--yt-spec-call-to-action-inverse-color, #ff0000)",
+            background: isDisabled
+              ? "var(--yt-spec-10-percent-layer, rgba(255,255,255,0.1))"
+              : "var(--yt-spec-call-to-action-inverse-color, #ff0000)",
             border: "none",
             borderRadius: "50%",
             color: "var(--yt-spec-static-brand-white, #fff)",
-            cursor:
-              loading || !input.trim() || !hasKey || !hasModel || !hasAnyProvider
-                ? "default"
-                : "pointer",
+            cursor: isDisabled ? "default" : "pointer",
             width: 36,
             height: 36,
             display: "flex",

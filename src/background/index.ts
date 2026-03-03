@@ -283,8 +283,8 @@ async function handleGenerateTimeline(
       model: providerInstance(model),
       system:
         "You are analyzing a YouTube video transcript. " +
-        "For each given segment, provide a short, descriptive title (4–7 words) capturing the main topic. " +
-        "Return ONLY a valid JSON array of strings, one per segment, in order. No other text, no markdown fences.",
+        "For each segment, write a short title (3–6 words) that captures the main topic. Be specific, not generic. " +
+        "Return ONLY a valid JSON array of strings, one per segment, in the same order. No other text, no markdown.",
       messages: [
         {
           role: "user",

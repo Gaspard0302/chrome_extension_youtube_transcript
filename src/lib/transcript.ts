@@ -493,6 +493,11 @@ export function getYouTubeChapters(): YouTubeChapter[] | null {
     // Extract the JSON object via bracket + string-literal counting
     const jsonStart = start + marker.length;
     if (text[jsonStart] !== "{") continue;
+
+    // Quick pre-check: skip the expensive JSON.parse if there is no chapter data.
+    // Most videos have no chapters; this avoids parsing 200KB–2MB of JSON for them.
+    if (!text.includes('"markersMap"')) return null;
+
     let depth = 0, inStr = false, esc = false, end = jsonStart;
     for (; end < text.length; end++) {
       const c = text[end];
