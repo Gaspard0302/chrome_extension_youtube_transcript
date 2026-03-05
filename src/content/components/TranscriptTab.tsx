@@ -40,10 +40,20 @@ export default function TranscriptTab({ segments, semanticEnabled }: Props) {
   // Auto-scroll to active segment when not searching
   useEffect(() => {
     if (activeIndex === null || searchResults !== null) return;
-    const el = containerRef.current?.querySelector(
-      `[data-index="${activeIndex}"]`
-    );
-    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    const container = containerRef.current;
+    const el = container?.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`);
+    if (!container || !el) return;
+
+    const elTop = el.offsetTop;
+    const elBottom = elTop + el.offsetHeight;
+    const viewTop = container.scrollTop;
+    const viewBottom = viewTop + container.clientHeight;
+
+    if (elTop < viewTop) {
+      container.scrollTo({ top: elTop - 8, behavior: "smooth" });
+    } else if (elBottom > viewBottom) {
+      container.scrollTo({ top: elBottom - container.clientHeight + 8, behavior: "smooth" });
+    }
   }, [activeIndex, searchResults]);
 
   function jumpTo(seconds: number) {
