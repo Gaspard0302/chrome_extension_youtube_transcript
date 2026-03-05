@@ -21,7 +21,7 @@
     "name": "providers"
   },
   "index.tsx-loader.js": {
-    "file": "assets/index.tsx-loader-D_-Cg8CF.js",
+    "file": "assets/index.tsx-loader-AUfYcxYF.js",
     "src": "index.tsx-loader.js"
   },
   "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm": {
@@ -38,7 +38,7 @@
     ]
   },
   "src/content/index.tsx": {
-    "file": "assets/index.tsx-CLy65nkT.js",
+    "file": "assets/index.tsx-BKw_dHcR.js",
     "name": "index.tsx",
     "src": "src/content/index.tsx",
     "isEntry": true,

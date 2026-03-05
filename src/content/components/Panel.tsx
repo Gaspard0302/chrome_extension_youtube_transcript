@@ -15,11 +15,29 @@ import TranscriptTab from "./TranscriptTab";
 import TimelineTab from "./TimelineTab";
 
 type Tab = "transcript" | "chat" | "timeline";
-type LoadState = "idle" | "fetching" | "embedding" | "ready" | "error";
+type LoadState = "idle" | "fetching" | "ready" | "error";
 
 interface Props {
   triggerContainer: HTMLElement;
   panelContainer: HTMLElement;
+}
+
+function EmbeddingBanner({ progress }: { progress: number }) {
+  return (
+    <div style={{
+      padding: "6px 12px",
+      background: "rgba(0,0,0,0.3)",
+      borderBottom: "1px solid rgba(255,255,255,0.08)",
+      fontSize: 11,
+      color: "var(--yt-spec-text-secondary, #aaa)",
+      flexShrink: 0,
+    }}>
+      <div style={{ marginBottom: 4 }}>Building semantic index… {progress}%</div>
+      <div style={{ height: 2, background: "rgba(255,255,255,0.1)", borderRadius: 1, overflow: "hidden" }}>
+        <div style={{ width: `${progress}%`, height: "100%", background: "var(--yt-spec-call-to-action-inverse-color, #ff0000)", transition: "width 0.3s" }} />
+      </div>
+    </div>
+  );
 }
 
 export default function Panel({ triggerContainer, panelContainer }: Props) {
@@ -32,6 +50,7 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
   const [embeddedSegments, setEmbeddedSegments] = useState<EmbeddedSegment[]>(
     []
   );
+  const [isEmbedding, setIsEmbedding] = useState(false);
   const [copied, setCopied] = useState(false);
   const [settings, setSettings] = useState<Settings>(
     DEFAULT_SETTINGS as Settings
@@ -74,9 +93,12 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
       const chunks = chunkTranscript(segments);
       setRawSegments(chunks);
 
+      setLoadState("ready");
+
       if (settingsRef.current.semanticSearchEnabled) {
+        setIsEmbedding(true);
+        setLoadProgress(0);
         try {
-          setLoadState("embedding");
           const embedded = await embedSegments(chunks, (pct) =>
             setLoadProgress(pct)
           );
@@ -86,11 +108,10 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
             "[YT Transcript] Embedding failed, falling back to exact search:",
             embErr
           );
-          // embeddedSegments stays [] → semanticEnabled becomes false
+        } finally {
+          setIsEmbedding(false);
         }
       }
-
-      setLoadState("ready");
     } catch (err) {
       setErrorMsg("Failed to load transcript.");
       setLoadState("error");
@@ -209,11 +230,21 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
               marginLeft: "auto",
               fontSize: 11,
               color: "var(--yt-spec-text-secondary, #aaa)",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
             }}
           >
-            {loadState === "ready" && `${rawSegments.length} chunks`}
-            {loadState === "embedding" && `Embedding… ${loadProgress}%`}
+            {loadState === "ready" && !isEmbedding && `${rawSegments.length} chunks`}
             {loadState === "fetching" && "Fetching…"}
+            {isEmbedding && (
+              <>
+                <span>Indexing… {loadProgress}%</span>
+                <div style={{ width: 36, height: 2, background: "rgba(255,255,255,0.1)", borderRadius: 1, overflow: "hidden" }}>
+                  <div style={{ width: `${loadProgress}%`, height: "100%", background: "var(--yt-spec-call-to-action-inverse-color, #ff0000)", transition: "width 0.3s" }} />
+                </div>
+              </>
+            )}
           </span>
 
           <button
@@ -337,40 +368,16 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
           </div>
         )}
 
-        {(loadState === "fetching" || loadState === "embedding") && (
+        {loadState === "fetching" && (
           <div
             style={{
               padding: 24,
-              textAlign: "center",
               color: "var(--yt-spec-text-secondary, #aaa)",
               fontSize: 13,
+              textAlign: "center",
             }}
           >
-            <div style={{ marginBottom: 8 }}>
-              {loadState === "fetching"
-                ? "Fetching transcript…"
-                : `Building search index… ${loadProgress}%`}
-            </div>
-            <div
-              style={{
-                height: 3,
-                background:
-                  "var(--yt-spec-10-percent-layer, rgba(255,255,255,0.1))",
-                borderRadius: 2,
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  height: "100%",
-                  background:
-                    "var(--yt-spec-call-to-action-inverse-color, #ff0000)",
-                  width:
-                    loadState === "fetching" ? "30%" : `${loadProgress}%`,
-                  transition: "width 0.3s",
-                }}
-              />
-            </div>
+            Fetching transcript…
           </div>
         )}
 
@@ -385,19 +392,25 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
               />
             )}
             {tab === "chat" && (
-              <ChatTab
-                segments={rawSegments}
-                settings={settings}
-                onSettingsChange={handleSettingsChange}
-                videoId={videoIdRef.current}
-              />
+              <>
+                {isEmbedding && <EmbeddingBanner progress={loadProgress} />}
+                <ChatTab
+                  segments={rawSegments}
+                  settings={settings}
+                  onSettingsChange={handleSettingsChange}
+                  videoId={videoIdRef.current}
+                />
+              </>
             )}
             {tab === "timeline" && (
-              <TimelineTab
-                segments={embeddedOrRaw}
-                settings={settings}
-                videoId={videoIdRef.current}
-              />
+              <>
+                {isEmbedding && <EmbeddingBanner progress={loadProgress} />}
+                <TimelineTab
+                  segments={embeddedOrRaw}
+                  settings={settings}
+                  videoId={videoIdRef.current}
+                />
+              </>
             )}
           </>
         )}
