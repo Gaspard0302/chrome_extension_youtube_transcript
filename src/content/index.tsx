@@ -16,6 +16,8 @@ let triggerContainer: HTMLElement | null = null;
 let panelContainer: HTMLElement | null = null;
 let domObserver: MutationObserver | null = null;
 let playerObserver: MutationObserver | null = null;
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+let navDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 function cleanup() {
   reactRoot?.unmount();
@@ -30,6 +32,10 @@ function cleanup() {
   domObserver = null;
   playerObserver?.disconnect();
   playerObserver = null;
+  if (heartbeatInterval !== null) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
 }
 
 function mountApp(
@@ -69,6 +75,19 @@ function mountApp(
       panelContainer={panelContainer}
     />
   );
+
+  // Watch for YouTube re-rendering the action bar (common on SPA nav)
+  if (heartbeatInterval !== null) clearInterval(heartbeatInterval);
+  heartbeatInterval = setInterval(() => {
+    if (!location.pathname.startsWith("/watch")) {
+      cleanup();
+      return;
+    }
+    if (triggerContainer && !document.contains(triggerContainer)) {
+      cleanup();
+      waitForPlayerThenDOM();
+    }
+  }, 1500);
 }
 
 function waitForDOMAndMount() {
@@ -143,7 +162,44 @@ if (document.readyState === "loading") {
 }
 
 // Re-mount on YouTube SPA navigation
-document.addEventListener("yt-navigate-finish", () => {
-  cleanup();
-  setTimeout(waitForPlayerThenDOM, 500);
-});
+// YouTube fires yt-navigate-finish and/or yt-page-data-updated depending on nav type.
+// Debounce so both events firing for the same navigation only trigger one remount.
+let lastHandledUrl = location.href;
+
+function handleNavigation() {
+  if (navDebounceTimer !== null) clearTimeout(navDebounceTimer);
+  navDebounceTimer = setTimeout(() => {
+    navDebounceTimer = null;
+    if (!location.pathname.startsWith("/watch")) {
+      cleanup();
+      return;
+    }
+    cleanup();
+    setTimeout(waitForPlayerThenDOM, 300);
+  }, 200);
+}
+
+document.addEventListener("yt-navigate-finish", handleNavigation);
+document.addEventListener("yt-page-data-updated", handleNavigation);
+window.addEventListener("popstate", handleNavigation);
+
+// Patch history.pushState/replaceState — YouTube's SPA router calls these directly.
+// This fires synchronously on every navigation regardless of custom event availability.
+const _origPush = history.pushState.bind(history);
+history.pushState = function (...args: Parameters<typeof history.pushState>) {
+  _origPush(...args);
+  handleNavigation();
+};
+const _origReplace = history.replaceState.bind(history);
+history.replaceState = function (...args: Parameters<typeof history.replaceState>) {
+  _origReplace(...args);
+  handleNavigation();
+};
+
+// Fallback: poll for URL changes (handles edge cases)
+setInterval(() => {
+  if (location.href !== lastHandledUrl) {
+    lastHandledUrl = location.href;
+    handleNavigation();
+  }
+}, 500);
