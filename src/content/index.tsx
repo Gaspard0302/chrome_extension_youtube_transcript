@@ -6,6 +6,7 @@ import "./content.css";
 import { waitForDOMNodes, findActionBar, findSecondaryColumn, findDescriptionContainer } from "../lib/youtube-dom";
 import type { PanelMode } from "../lib/youtube-dom";
 import { getSegments } from "../lib/segment-store";
+import { clearChapterMarkers } from "./chapter-markers";
 import { exactSearch, hybridSearch } from "../lib/search";
 import { formatTimestamp } from "../lib/transcript";
 import type { SearchResult } from "../types";
@@ -24,6 +25,7 @@ function isWatchPage(): boolean {
 }
 
 function cleanup() {
+  clearChapterMarkers();
   reactRoot?.unmount();
   reactRoot = null;
   appHost?.remove();

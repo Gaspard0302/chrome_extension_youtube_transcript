@@ -121,10 +121,17 @@ function handleGetCapturedTimedtext(
     const list: CapturedTimedtext[] = Array.isArray(data?.[captureKey(tabId)])
       ? data[captureKey(tabId)]
       : [];
-    const match = list.find(
+    const forVideo = list.filter(
       (e) => e.videoId === videoId || e.url.includes(`v=${videoId}`)
     );
-    sendResponse({ url: match?.url ?? null });
+    // Prefer a real caption fetch (has a pot token, not a type=list metadata
+    // request) over anything else.
+    const best =
+      forVideo.find((e) => e.url.includes("pot=") && !e.url.includes("type=list")) ??
+      forVideo.find((e) => !e.url.includes("type=list")) ??
+      forVideo[0];
+    const hasPot = best ? best.url.includes("pot=") : false;
+    sendResponse({ url: best?.url ?? null, hasPot });
   });
 }
 

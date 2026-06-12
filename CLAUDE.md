@@ -97,3 +97,26 @@ Verified by direct curl testing (2026-06):
 - **`get_transcript` returns 400 "Precondition check failed"** without the `Authorization: SAPISIDHASH <ts>_<sha1(ts SAPISID origin)>` header, even when session cookies are sent. SAPISID is a non-httpOnly cookie, readable via `document.cookie` from the content script. See `buildSapisidAuth` in `src/lib/transcript.ts`.
 - **Timedtext URLs can now 404 after stripping `exp`** (it appears `exp` joined the signed params on some URLs). Don't assume the strip is safe — try both variants (stripped first, then original).
 - **The bulletproof fallback is POT capture**: the page's player fetches timedtext with a valid Proof-of-Origin Token that extensions cannot mint. The background worker records `*/api/timedtext*` requests via `webRequest` (per tab, in `chrome.storage.session`); a MAIN-world bridge (`src/content/main-world.ts`, manifest `world: "MAIN"`) can nudge the player to load its captions module to trigger such a request, and exposes `#movie_player.getPlayerResponse()` (always current after SPA nav). NEVER modify a captured URL beyond swapping `fmt` via string surgery — re-serializing through `new URL()` re-encodes params and can break the signature.
+
+---
+
+## The reliable fallback under full lockdown: scrape the native transcript panel
+
+By mid-2026 every network path can be blocked simultaneously: timedtext returns
+empty 200 (POT) or 404 (exp now signed), `get_transcript` returns 400, and the
+player's *captured* timedtext URL also returns empty (the POT is not replayable
+from the captured URL — likely bound to the request's BotGuard context, and may
+not even be a query param).
+
+The path that still works: **let YouTube render its own transcript panel and
+scrape the DOM.** YouTube performs the fetch with all its own tokens; we click
+"Show transcript", wait for `ytd-transcript-segment-renderer` elements, read
+`.segment-timestamp` + `.segment-text`, derive each duration from the next
+segment's start, then restore the panel's prior open/closed state. See
+`scrapeNativeTranscriptPanel` in `src/lib/transcript.ts`. Durations are
+approximate (segment-level, no overlap) which is fine for chunking/citations.
+
+Current fetch order: timedtext variants → get_transcript → passive captured POT
+URL → **native panel scrape** → nudge+capture. The panel scrape is the one to
+trust; the network paths are kept first only because they're silent and faster
+when they happen to work.

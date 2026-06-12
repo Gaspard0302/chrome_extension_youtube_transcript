@@ -384,6 +384,143 @@ export async function checkTranscriptAvailability(
 }
 
 // ---------------------------------------------------------------------------
+// Native transcript panel scrape (most reliable — YouTube does the fetch)
+// ---------------------------------------------------------------------------
+
+function parseTimestampToSeconds(ts: string): number {
+  const parts = ts.trim().split(":").map((p) => parseInt(p, 10));
+  if (parts.some(isNaN)) return 0;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return parts[0] ?? 0;
+}
+
+function waitFor<T>(get: () => T | null, timeoutMs: number, intervalMs = 150): Promise<T | null> {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const tick = () => {
+      const v = get();
+      if (v) {
+        resolve(v);
+        return;
+      }
+      if (Date.now() - start >= timeoutMs) {
+        resolve(null);
+        return;
+      }
+      setTimeout(tick, intervalMs);
+    };
+    tick();
+  });
+}
+
+function readRenderedTranscriptSegments(): TranscriptSegment[] {
+  const nodes = document.querySelectorAll("ytd-transcript-segment-renderer");
+  const segments: TranscriptSegment[] = [];
+  for (const node of nodes) {
+    const tsEl = node.querySelector(".segment-timestamp, [class*='timestamp']");
+    const textEl = node.querySelector(".segment-text, yt-formatted-string.segment-text, [class*='segment-text']");
+    const ts = tsEl?.textContent?.trim() ?? "";
+    const text = textEl?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+    if (text) {
+      const start = parseTimestampToSeconds(ts);
+      segments.push({ text, start, duration: 0 });
+    }
+  }
+  // Derive each segment's duration from the next segment's start.
+  for (let i = 0; i < segments.length - 1; i++) {
+    segments[i].duration = Math.max(segments[i + 1].start - segments[i].start, 0);
+  }
+  return segments;
+}
+
+function findTranscriptButton(): HTMLElement | null {
+  // 1) The dedicated transcript section in the (possibly collapsed) description
+  const sectionBtn = document.querySelector<HTMLElement>(
+    "ytd-video-description-transcript-section-renderer button, " +
+      "ytd-video-description-transcript-section-renderer ytd-button-renderer button"
+  );
+  if (sectionBtn) return sectionBtn;
+
+  // 2) Any button labelled "transcript" (aria-label or text)
+  const candidates = document.querySelectorAll<HTMLElement>(
+    "button, tp-yt-paper-button, yt-button-shape button, a"
+  );
+  for (const el of candidates) {
+    const label = (el.getAttribute("aria-label") ?? "").toLowerCase();
+    const text = (el.textContent ?? "").toLowerCase();
+    if (label.includes("transcript") || /show transcript/.test(text)) return el;
+  }
+  return null;
+}
+
+function closeTranscriptPanel() {
+  const closeBtn = document.querySelector<HTMLElement>(
+    'ytd-engagement-panel-section-list-renderer[target-id*="transcript"] #visibility-button button, ' +
+      'ytd-engagement-panel-section-list-renderer[target-id*="transcript"] button[aria-label*="Close" i]'
+  );
+  closeBtn?.click();
+}
+
+/**
+ * Scrape the transcript from YouTube's own native transcript panel. This is
+ * the most robust path under POT/auth lockdown: YouTube fetches the transcript
+ * with all its own tokens and renders it into the DOM; we just read it.
+ *
+ * Opens the panel if needed, reads the rendered segments, then restores the
+ * prior panel state. Returns null if the panel/segments never appear.
+ */
+async function scrapeNativeTranscriptPanel(diag: FetchDiagnostics): Promise<TranscriptSegment[] | null> {
+  // Already open?
+  let existing = readRenderedTranscriptSegments();
+  if (existing.length > 0) {
+    diag.steps.push({ label: "Native transcript panel", status: "ok", detail: `${existing.length} segments (already open)` });
+    return existing;
+  }
+
+  const panelWasOpen = !!document.querySelector(
+    'ytd-engagement-panel-section-list-renderer[target-id*="transcript"][visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"]'
+  );
+
+  const btn = findTranscriptButton();
+  if (!btn) {
+    // Some layouts need the description expanded first to reveal the button.
+    document.querySelector<HTMLElement>("tp-yt-paper-button#expand, #expand")?.click();
+    const retryBtn = await waitFor(() => findTranscriptButton(), 1500);
+    if (!retryBtn) {
+      diag.steps.push({ label: "Native transcript panel", status: "warn", detail: "Transcript button not found in page" });
+      return null;
+    }
+    retryBtn.click();
+  } else {
+    btn.click();
+  }
+
+  const ready = await waitFor(() => {
+    const segs = readRenderedTranscriptSegments();
+    return segs.length > 0 ? segs : null;
+  }, 6000);
+
+  if (!ready) {
+    diag.steps.push({ label: "Native transcript panel", status: "warn", detail: "Panel opened but no segments rendered in time" });
+    return null;
+  }
+
+  existing = readRenderedTranscriptSegments();
+  diag.steps.push({ label: "Native transcript panel", status: "ok", detail: `${existing.length} segments scraped from DOM` });
+
+  // Restore prior state — leave the page as we found it.
+  if (!panelWasOpen) {
+    try {
+      closeTranscriptPanel();
+    } catch {
+      // non-fatal
+    }
+  }
+  return existing;
+}
+
+// ---------------------------------------------------------------------------
 // Transcript fetching
 // ---------------------------------------------------------------------------
 
@@ -447,7 +584,8 @@ export async function fetchTranscript(
 
   let lastErr: Error | null = null;
 
-  // Path 1: timedtext URL of the preferred track (several URL variants)
+  // Path 1: timedtext URL of the preferred track (several URL variants).
+  // Fast and silent — works when POT is not enforced for this URL.
   try {
     const segments = await fetchTranscriptData(preferred.baseUrl, diag);
     return { segments, tracksLen: resolved.tracks.length, diagnostics: diag };
@@ -455,39 +593,32 @@ export async function fetchTranscript(
     lastErr = err instanceof Error ? err : new Error(String(err));
   }
 
-  // Path 2: a timedtext URL the player already fetched itself (passive — no
-  // UI side effects; present when the user watches with captions on)
-  let segments = await tryCapturedTimedtext(videoId, preferred.languageCode, diag, false);
-  if (segments) {
-    return { segments, tracksLen: resolved.tracks.length, diagnostics: diag };
-  }
-
-  // Path 3: get_transcript API (with SAPISIDHASH auth)
+  // Path 2: get_transcript API (with SAPISIDHASH auth) — silent.
   const gtSegments = await tryGetTranscriptApi(videoId, preferred.languageCode, diag);
   if (gtSegments && gtSegments.length > 0) {
     return { segments: gtSegments, tracksLen: resolved.tracks.length, diagnostics: diag };
   }
 
-  // Path 4: nudge the player to load captions and capture its POT URL —
-  // briefly flashes captions on, but works when everything else is blocked
-  segments = await tryCapturedTimedtext(videoId, preferred.languageCode, diag, true);
+  // Path 3: a timedtext URL the player already fetched itself (passive — no
+  // UI side effects; present when the user watches with captions on).
+  let segments = await tryCapturedTimedtext(videoId, preferred.languageCode, diag, false);
   if (segments) {
     return { segments, tracksLen: resolved.tracks.length, diagnostics: diag };
   }
 
-  // Path 5: resolve fresh tracks (cached URLs may have expired) and retry once
-  trackCache.delete(videoId);
-  try {
-    const freshResolved = await resolveCaptionTracks(videoId, diag, true);
-    if (freshResolved.tracks.length > 0) {
-      const freshTrack = pickPreferredTrack(freshResolved.tracks);
-      if (freshTrack.baseUrl !== preferred.baseUrl) {
-        const freshSegments = await fetchTranscriptData(freshTrack.baseUrl, diag);
-        return { segments: freshSegments, tracksLen: freshResolved.tracks.length, diagnostics: diag };
-      }
-    }
-  } catch (err) {
-    lastErr = err instanceof Error ? err : new Error(String(err));
+  // Path 4: scrape YouTube's own native transcript panel. The most robust
+  // path under the 2026 POT/auth lockdown — YouTube performs the fetch with
+  // all of its own tokens and renders the result; we read it from the DOM.
+  segments = await scrapeNativeTranscriptPanel(diag);
+  if (segments && segments.length > 0) {
+    return { segments, tracksLen: resolved.tracks.length, diagnostics: diag };
+  }
+
+  // Path 5: nudge the player to load captions and capture its POT URL —
+  // briefly flashes captions on, last-ditch.
+  segments = await tryCapturedTimedtext(videoId, preferred.languageCode, diag, true);
+  if (segments) {
+    return { segments, tracksLen: resolved.tracks.length, diagnostics: diag };
   }
 
   throw Object.assign(
@@ -796,21 +927,23 @@ async function fetchTranscriptData(baseUrl: string, diag: FetchDiagnostics): Pro
 // POT capture — re-use the player's own timedtext URL
 // ---------------------------------------------------------------------------
 
-function getCapturedTimedtextUrl(videoId: string): Promise<string | null> {
+function getCapturedTimedtextUrl(
+  videoId: string
+): Promise<{ url: string | null; hasPot: boolean }> {
   return new Promise((resolve) => {
     try {
       chrome.runtime.sendMessage(
         { type: "GET_CAPTURED_TIMEDTEXT", payload: { videoId } },
-        (resp: { url?: string | null } | undefined) => {
+        (resp: { url?: string | null; hasPot?: boolean } | undefined) => {
           if (chrome.runtime.lastError || !resp) {
-            resolve(null);
+            resolve({ url: null, hasPot: false });
             return;
           }
-          resolve(resp.url ?? null);
+          resolve({ url: resp.url ?? null, hasPot: !!resp.hasPot });
         }
       );
     } catch {
-      resolve(null);
+      resolve({ url: null, hasPot: false });
     }
   });
 }
@@ -828,9 +961,9 @@ async function tryCapturedTimedtext(
   diag: FetchDiagnostics,
   allowNudge: boolean
 ): Promise<TranscriptSegment[] | null> {
-  let url = await getCapturedTimedtextUrl(videoId);
+  let captured = await getCapturedTimedtextUrl(videoId);
 
-  if (!url && allowNudge) {
+  if (!captured.url && allowNudge) {
     diag.steps.push({
       label: "Nudge player captions",
       status: "warn",
@@ -839,12 +972,13 @@ async function tryCapturedTimedtext(
     document.dispatchEvent(
       new CustomEvent("ytta-nudge-captions", { detail: JSON.stringify({ lang: lang ?? "en" }) })
     );
-    for (let i = 0; i < 10 && !url; i++) {
+    for (let i = 0; i < 10 && !captured.url; i++) {
       await new Promise((r) => setTimeout(r, 400));
-      url = await getCapturedTimedtextUrl(videoId);
+      captured = await getCapturedTimedtextUrl(videoId);
     }
   }
 
+  const url = captured.url;
   if (!url) {
     diag.steps.push({
       label: "Captured timedtext URL",
@@ -857,7 +991,7 @@ async function tryCapturedTimedtext(
   diag.steps.push({
     label: "Captured timedtext URL",
     status: "ok",
-    detail: "Re-using the player's own POT-authorized request URL",
+    detail: `Re-using player's request URL (pot token ${captured.hasPot ? "present" : "ABSENT — likely won't work"})`,
   });
   try {
     return await fetchAndParseTimedtext(withFormat(url, "json3"), diag, "captured json3");

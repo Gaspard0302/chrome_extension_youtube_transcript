@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import type { EmbeddedSegment, Settings } from "../../types";
 import { PROVIDERS } from "../../lib/providers";
 import { formatTimestamp, getYouTubeChapters } from "../../lib/transcript";
+import { setChapterMarkers, clearChapterMarkers } from "../chapter-markers";
 
 // ---------------------------------------------------------------------------
 // Segmentation helpers
@@ -366,6 +367,24 @@ export default function TimelineTab({ segments, settings, videoId }: Props) {
   }
 
   const displayBlocks = source === "chapters" && ytChapters ? ytChapters : blocks;
+
+  // Mirror the AI timeline onto YouTube's progress bar as chapter markers.
+  // Native creator chapters already render natively, so only the AI source is
+  // mirrored. Intentionally NOT cleared on unmount: markers should stay on the
+  // player while the user browses other panel tabs (the chapter-markers module
+  // clears itself on SPA navigation).
+  useEffect(() => {
+    if (source !== "ai" || blocks.length === 0) {
+      clearChapterMarkers();
+      return;
+    }
+    setChapterMarkers(
+      blocks.map((b, i) => ({
+        startTime: b.startTime,
+        title: b.title ?? `Segment ${i + 1}`,
+      }))
+    );
+  }, [blocks, source]);
 
   if (!segments.length) {
     return (

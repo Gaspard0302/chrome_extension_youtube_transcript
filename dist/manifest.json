@@ -27,7 +27,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/index.tsx-loader-S4c7z6BE.js"
+        "assets/index.tsx-loader-BzeU5PT4.js"
       ],
       "matches": [
         "https://www.youtube.com/*"
@@ -70,7 +70,7 @@
         "assets/*",
         "assets/client-B-OClMmu.js",
         "assets/providers-B-uW_wjG.js",
-        "assets/index.tsx-CfecBnyX.js",
+        "assets/index.tsx-DJJb4eAV.js",
         "assets/main-world.ts-DXJy0tTB.js"
       ],
       "use_dynamic_url": false
