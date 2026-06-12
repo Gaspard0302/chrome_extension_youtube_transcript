@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TranscriptAI for YouTube",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Search and chat with YouTube transcripts using AI",
   "permissions": [
     "storage",
@@ -27,7 +27,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/index.tsx-loader-CLU9-KTM.js"
+        "assets/index.tsx-loader-D6An45vv.js"
       ],
       "matches": [
         "https://www.youtube.com/*"
@@ -70,7 +70,7 @@
         "assets/*",
         "assets/client-B-OClMmu.js",
         "assets/providers-B-uW_wjG.js",
-        "assets/index.tsx-DIeaQ5pc.js",
+        "assets/index.tsx-DxdgcE_H.js",
         "assets/main-world.ts-DXJy0tTB.js"
       ],
       "use_dynamic_url": false

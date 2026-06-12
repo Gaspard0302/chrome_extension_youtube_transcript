@@ -456,7 +456,6 @@ function findTranscriptButton(): HTMLElement | null {
 
 const TRANSCRIPT_PANEL_SELECTOR =
   'ytd-engagement-panel-section-list-renderer[target-id*="transcript"]';
-const HIDE_STYLE_ID = "ytta-hide-transcript-panel";
 
 function getTranscriptPanel(): HTMLElement | null {
   return document.querySelector<HTMLElement>(TRANSCRIPT_PANEL_SELECTOR);
@@ -466,24 +465,6 @@ function isTranscriptPanelOpen(): boolean {
   return !!document.querySelector(
     `${TRANSCRIPT_PANEL_SELECTOR}[visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"]`
   );
-}
-
-/**
- * Move the native transcript panel fully off-screen while we drive it, so the
- * user never sees it pop open. It stays rendered (real size, in the DOM) so
- * YouTube still populates the segment rows — we just can't see it happen.
- */
-function setTranscriptPanelHidden(hidden: boolean) {
-  const existing = document.getElementById(HIDE_STYLE_ID);
-  if (!hidden) {
-    existing?.remove();
-    return;
-  }
-  if (existing) return;
-  const style = document.createElement("style");
-  style.id = HIDE_STYLE_ID;
-  style.textContent = `${TRANSCRIPT_PANEL_SELECTOR}{position:fixed!important;top:0!important;left:-12000px!important;width:400px!important;height:800px!important;opacity:0!important;pointer-events:none!important;z-index:-1!important;}`;
-  document.head.appendChild(style);
 }
 
 /**
@@ -529,7 +510,9 @@ async function scrapeNativeTranscriptPanel(diag: FetchDiagnostics): Promise<Tran
   }
 
   const panelWasOpen = isTranscriptPanelOpen();
-  if (!panelWasOpen) setTranscriptPanelHidden(true);
+  // NOTE: do NOT hide the panel off-screen — YouTube gates the transcript
+  // fetch on the panel becoming actually visible, so hiding it makes the rows
+  // never populate. We accept a brief flash and close it again immediately.
 
   try {
     const btn = findTranscriptButton();
@@ -560,8 +543,7 @@ async function scrapeNativeTranscriptPanel(diag: FetchDiagnostics): Promise<Tran
     diag.steps.push({ label: "Native transcript panel", status: "ok", detail: `${existing.length} segments scraped from DOM` });
     return existing;
   } finally {
-    // Restore the page to how we found it: close the panel if we opened it,
-    // then drop the off-screen style.
+    // Restore the page to how we found it: close the panel if we opened it.
     if (!panelWasOpen) {
       try {
         await closeTranscriptPanel();
@@ -569,7 +551,6 @@ async function scrapeNativeTranscriptPanel(diag: FetchDiagnostics): Promise<Tran
         // non-fatal
       }
     }
-    setTranscriptPanelHidden(false);
   }
 }
 
@@ -659,18 +640,19 @@ export async function fetchTranscript(
     return { segments, tracksLen: resolved.tracks.length, diagnostics: diag };
   }
 
-  // Path 4: scrape YouTube's own native transcript panel. The most robust
-  // path under the 2026 POT/auth lockdown — YouTube performs the fetch with
-  // all of its own tokens and renders the result; we read it from the DOM.
-  segments = await scrapeNativeTranscriptPanel(diag);
-  if (segments && segments.length > 0) {
+  // Path 4: enable captions (CC button) so the player issues a POT-authorized
+  // timedtext request, capture it, and re-fetch. This is the reliable path
+  // under the 2026 POT lockdown — it replicates the user turning on CC, which
+  // is the only thing that makes YouTube mint a usable token. Captions are
+  // toggled back off afterwards.
+  segments = await tryCapturedTimedtext(videoId, preferred.languageCode, diag, true);
+  if (segments) {
     return { segments, tracksLen: resolved.tracks.length, diagnostics: diag };
   }
 
-  // Path 5: nudge the player to load captions and capture its POT URL —
-  // briefly flashes captions on, last-ditch.
-  segments = await tryCapturedTimedtext(videoId, preferred.languageCode, diag, true);
-  if (segments) {
+  // Path 5 (last resort): scrape YouTube's own native transcript panel.
+  segments = await scrapeNativeTranscriptPanel(diag);
+  if (segments && segments.length > 0) {
     return { segments, tracksLen: resolved.tracks.length, diagnostics: diag };
   }
 
@@ -1001,12 +983,40 @@ function getCapturedTimedtextUrl(
   });
 }
 
+/** The CC / subtitles toggle in the player controls (lives in the page DOM). */
+function getCaptionToggle(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(".ytp-subtitles-button.ytp-button, .ytp-subtitles-button");
+}
+
+/**
+ * Enable captions exactly the way the user does — by clicking the CC button.
+ * This makes the player issue a timedtext request carrying a valid POT, which
+ * the background worker captures. Returns whether captions were already on so
+ * the caller can restore the prior state. The JS-API nudge is fired too as a
+ * belt-and-braces fallback.
+ */
+function turnCaptionsOn(lang: string | undefined): { toggled: boolean; available: boolean } {
+  document.dispatchEvent(
+    new CustomEvent("ytta-nudge-captions", { detail: JSON.stringify({ lang: lang ?? "en" }) })
+  );
+  const btn = getCaptionToggle();
+  if (!btn) return { toggled: false, available: false };
+  const wasOn = btn.getAttribute("aria-pressed") === "true";
+  if (!wasOn) btn.click();
+  return { toggled: !wasOn, available: true };
+}
+
+function turnCaptionsOff() {
+  const btn = getCaptionToggle();
+  if (btn && btn.getAttribute("aria-pressed") === "true") btn.click();
+}
+
 /**
  * The page's player fetches timedtext with a valid Proof-of-Origin Token that
  * extensions cannot mint themselves; the background worker records those
  * requests (webRequest) and we re-fetch the captured URL with the user's
- * cookies. When allowNudge is set and nothing was captured yet, the MAIN-world
- * bridge briefly enables the player's caption module to trigger such a request.
+ * cookies. When allowNudge is set and we don't yet have a POT-bearing URL, we
+ * turn captions on (CC button) to provoke one, then restore the prior state.
  */
 async function tryCapturedTimedtext(
   videoId: string,
@@ -1016,19 +1026,24 @@ async function tryCapturedTimedtext(
 ): Promise<TranscriptSegment[] | null> {
   let captured = await getCapturedTimedtextUrl(videoId);
 
-  if (!captured.url && allowNudge) {
+  // Nudge unless we already have a usable (POT-bearing) URL — a previously
+  // captured POT-less URL is not good enough and must not suppress the nudge.
+  if (allowNudge && !captured.hasPot) {
     diag.steps.push({
       label: "Nudge player captions",
       status: "warn",
-      detail: "Asking the player to load captions so its POT-authorized URL can be captured",
+      detail: "Enabling captions (CC button) so the player issues a POT-authorized request",
     });
-    document.dispatchEvent(
-      new CustomEvent("ytta-nudge-captions", { detail: JSON.stringify({ lang: lang ?? "en" }) })
-    );
-    for (let i = 0; i < 10 && !captured.url; i++) {
+    const { toggled, available } = turnCaptionsOn(lang);
+    if (!available) {
+      diag.steps.push({ label: "Nudge player captions", status: "warn", detail: "CC button not found in player" });
+    }
+    // Wait for a POT-bearing URL to be captured (fall back to any URL).
+    for (let i = 0; i < 15 && !captured.hasPot; i++) {
       await new Promise((r) => setTimeout(r, 400));
       captured = await getCapturedTimedtextUrl(videoId);
     }
+    if (toggled) turnCaptionsOff(); // restore prior caption state
   }
 
   const url = captured.url;
