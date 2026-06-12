@@ -409,6 +409,14 @@ You have one tool: \`search_transcript\`. It returns up to 15 transcript chunks 
       }
     };
 
+    if (!chrome.runtime?.id) {
+      setError("Extension was reloaded. Please refresh the page.");
+      setMessages((prev) => prev.slice(0, -1));
+      setLoading(false);
+      setSearchPhase(null);
+      return;
+    }
+
     chrome.runtime.onMessage.addListener(chunkListener);
 
     try {
@@ -432,7 +440,12 @@ You have one tool: \`search_transcript\`. It returns up to 15 transcript chunks 
         setMessages((prev) => prev.slice(0, -1));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      if (msg.includes("Extension context invalidated")) {
+        setError("Extension was reloaded. Please refresh the page.");
+      } else {
+        setError(msg);
+      }
       setMessages((prev) => prev.slice(0, -1));
     } finally {
       chrome.runtime.onMessage.removeListener(chunkListener);
@@ -674,7 +687,7 @@ You have one tool: \`search_transcript\`. It returns up to 15 transcript chunks 
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Ask about the video… (Enter to send)"
-          disabled={isDisabled}
+          disabled={loading}
           rows={1}
           style={{
             flex: 1,

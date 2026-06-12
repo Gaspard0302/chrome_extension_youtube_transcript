@@ -54,3 +54,35 @@ X-YouTube-Client-Version: 19.09.37
 **Cause**: The background service worker does **not** automatically carry the user's `youtube.com` session cookies. The timedtext URL's `signature` and `expire` parameters are tied to the user's session; without the matching cookies the server returns empty.
 
 **Fix**: Keep timedtext URL fetches in the content script with `credentials: "include"`, and strip `exp=xpe` as described above instead of rerouting.
+
+---
+
+## Stale `ytInitialPlayerResponse` after SPA navigation
+
+**Symptom**: After navigating video-to-video (or homepage → video) without a full page reload, the DOM `<script>` tags still contain the FIRST loaded page's `ytInitialPlayerResponse` / `ytInitialData`. Reading them yields the WRONG video's caption tracks/chapters, or a false "no captions".
+
+**Fix**: Always validate `videoDetails.videoId` (player response) or `currentVideoEndpoint.watchEndpoint.videoId` (ytInitialData) against the current URL's video ID before trusting DOM-embedded data. When stale, re-fetch the watch page HTML for the current videoId (same-origin, `credentials: "include"`) and parse `ytInitialPlayerResponse` from it — see `fetchWatchPagePlayerResponse` in `src/lib/transcript.ts`.
+
+---
+
+## Content script match pattern must be `https://www.youtube.com/*`, NOT `/watch*`
+
+**Symptom**: Extension button never appears when the user lands on the YouTube homepage and clicks into a video.
+
+**Cause**: Chrome injects content scripts only on full-page loads matching the pattern. YouTube is an SPA — navigating homepage → video does not reload the page, so a `/watch*`-only match never injects the script.
+
+**Fix**: Match all of `https://www.youtube.com/*` and gate mounting on `location.pathname === "/watch"` inside the script.
+
+---
+
+## Patching history.pushState in a content script is dead code
+
+Content scripts run in an ISOLATED world. The page's SPA router calls the page-world `history.pushState` binding, which the content-script patch never sees. Use the `yt-navigate-finish` / `yt-page-data-updated` DOM events (these DO cross worlds) plus a URL poll fallback.
+
+---
+
+## get_transcript: extract `params` from /next; response has two shapes
+
+- The hand-rolled protobuf `params` encoding has broken other tools when YouTube changed it. The robust source is YouTube's own data: POST `/youtubei/v1/next` (WEB context, with cookies) and regex out `"getTranscriptEndpoint":{"params":"..."}` — that is exactly what the native transcript panel sends. Hand-built params remain as fallback.
+- The response can be the legacy `transcriptBodyRenderer.cueGroups` OR the current `transcriptSegmentListRenderer.initialSegments[]` (with `startMs`/`endMs`/`snippet.runs`). Parse both, or you'll report "0 cues" on videos that have transcripts.
+- `get_transcript` needs only the videoId — always try it BEFORE concluding "no transcript" from missing caption tracks.

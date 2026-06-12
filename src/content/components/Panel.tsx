@@ -5,17 +5,36 @@ import {
   fetchTranscript,
   chunkTranscript,
   formatTimestamp,
+  checkTranscriptAvailability,
+  NoTranscriptError,
+  getYouTubeChapters,
 } from "../../lib/transcript";
-import { embedSegments } from "../../lib/embeddings";
+import type { TranscriptAvailability } from "../../lib/transcript";
+import { embedSegments, buildEmbeddingTexts } from "../../lib/embeddings";
+import { getVideoTitle } from "../../lib/youtube-dom";
 import { setSegments } from "../../lib/segment-store";
 import type { EmbeddedSegment, Settings, TranscriptSegment } from "../../types";
+import type { FetchDiagnostics } from "../../lib/transcript";
 import { DEFAULT_SETTINGS } from "../../lib/providers";
 import ChatTab from "./ChatTab";
 import TranscriptTab from "./TranscriptTab";
 import TimelineTab from "./TimelineTab";
 
-type Tab = "transcript" | "chat" | "timeline";
+type Tab = "transcript" | "chat" | "timeline" | "debug";
 type LoadState = "idle" | "fetching" | "ready" | "error";
+
+interface DebugInfo {
+  url: string;
+  videoId: string | null;
+  runtimeId: string | undefined;
+  diagnostics: FetchDiagnostics | null;
+  rawError: string | null;
+  tracksLen: number | null;
+  segmentsLen: number | null;
+  chunksLen: number | null;
+  userAgent: string;
+  timestamp: string;
+}
 
 interface Props {
   triggerContainer: HTMLElement;
@@ -40,6 +59,96 @@ function EmbeddingBanner({ progress }: { progress: number }) {
   );
 }
 
+function DebugTab({ debugInfo, loadState, errorMsg }: { debugInfo: DebugInfo | null; loadState: LoadState; errorMsg: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const statusColor = (s: "ok" | "warn" | "error") =>
+    s === "ok" ? "#4ade80" : s === "warn" ? "#fbbf24" : "#f87171";
+
+  const fullText = debugInfo ? JSON.stringify(debugInfo, null, 2) : "No debug info yet — open the panel to trigger a load.";
+
+  function copyAll() {
+    navigator.clipboard.writeText(fullText).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  }
+
+  const row = (label: string, value: string | null | undefined, color?: string) => (
+    <div style={{ display: "flex", gap: 8, padding: "3px 0", borderBottom: "1px solid rgba(255,255,255,0.05)", flexWrap: "wrap" }}>
+      <span style={{ fontSize: 11, color: "#888", minWidth: 110, flexShrink: 0 }}>{label}</span>
+      <span style={{ fontSize: 11, color: color ?? "#f1f1f1", wordBreak: "break-all", flex: 1 }}>{value ?? "—"}</span>
+    </div>
+  );
+
+  return (
+    <div className="yt-transcript-scrollable" style={{ flex: 1, overflowY: "auto", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* Copy button */}
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button
+          type="button"
+          onClick={copyAll}
+          style={{ background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 6, color: copied ? "#4ade80" : "#aaa", cursor: "pointer", fontSize: 11, padding: "4px 10px", fontFamily: "inherit" }}
+        >
+          {copied ? "Copied!" : "Copy all"}
+        </button>
+      </div>
+
+      {/* Environment */}
+      <section>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#aaa", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>Environment</div>
+        {row("Load state", loadState, loadState === "error" ? "#f87171" : loadState === "ready" ? "#4ade80" : "#fbbf24")}
+        {row("Error msg", errorMsg || null)}
+        {row("Runtime ID", debugInfo?.runtimeId ?? (chrome.runtime?.id ?? "MISSING — context invalidated!"), debugInfo?.runtimeId ? undefined : "#f87171")}
+        {row("URL", debugInfo?.url ?? window.location.href)}
+        {row("Video ID", debugInfo?.videoId ?? "not extracted")}
+        {row("Timestamp", debugInfo?.timestamp)}
+        {row("User agent", debugInfo?.userAgent)}
+      </section>
+
+      {/* Counts */}
+      {debugInfo && (
+        <section>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#aaa", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>Counts</div>
+          {row("Caption tracks", debugInfo.tracksLen?.toString())}
+          {row("Raw segments", debugInfo.segmentsLen?.toString())}
+          {row("Chunks", debugInfo.chunksLen?.toString())}
+        </section>
+      )}
+
+      {/* Diagnostic steps */}
+      {debugInfo?.diagnostics && (
+        <section>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#aaa", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>Fetch Steps</div>
+          {debugInfo.diagnostics.steps.map((step, i) => (
+            <div key={i} style={{ marginBottom: 8, padding: "6px 8px", background: "rgba(255,255,255,0.04)", borderRadius: 6, borderLeft: `3px solid ${statusColor(step.status)}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: statusColor(step.status) }}>{step.status.toUpperCase()}</span>
+                <span style={{ fontSize: 11, color: "#f1f1f1" }}>{step.label}</span>
+              </div>
+              {step.detail && <div style={{ fontSize: 10, color: "#aaa", wordBreak: "break-all", whiteSpace: "pre-wrap" }}>{step.detail}</div>}
+            </div>
+          ))}
+        </section>
+      )}
+
+      {/* Raw error */}
+      {debugInfo?.rawError && (
+        <section>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#f87171", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>Raw Error</div>
+          <pre style={{ fontSize: 10, color: "#f87171", whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0, background: "rgba(248,113,113,0.08)", padding: 8, borderRadius: 6 }}>{debugInfo.rawError}</pre>
+        </section>
+      )}
+
+      {!debugInfo && (
+        <div style={{ fontSize: 12, color: "#aaa", textAlign: "center", padding: 24 }}>
+          Switch to another tab to trigger a load, then come back here.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Panel({ triggerContainer, panelContainer }: Props) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("transcript");
@@ -52,12 +161,23 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
   );
   const [isEmbedding, setIsEmbedding] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
   const [settings, setSettings] = useState<Settings>(
     DEFAULT_SETTINGS as Settings
   );
   const settingsRef = useRef<Settings>(DEFAULT_SETTINGS as Settings);
 
   const videoIdRef = useRef<string | null>(null);
+  const [currentVideoId, setCurrentVideoId] = useState<string | null>(() =>
+    extractVideoId(window.location.href)
+  );
+  // "checking" while the probe runs; the trigger button is hidden for
+  // "checking" and "none", shown for "available" and "unknown" (probe failed —
+  // give the user the benefit of the doubt).
+  const [availability, setAvailability] = useState<TranscriptAvailability | "checking">("checking");
+  // Incremented on every video change / load start so an in-flight fetch from
+  // a previous video can never write its result into the current video's state.
+  const loadSeqRef = useRef(0);
 
   useEffect(() => {
     chrome.runtime.sendMessage({ type: "GET_SETTINGS" }, (s) => {
@@ -73,9 +193,42 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
     settingsRef.current = s;
   }
 
+  // Reset state when navigating to a new video (SPA nav within watch pages)
+  useEffect(() => {
+    const handleReset = () => {
+      loadSeqRef.current++;
+      setLoadState("idle");
+      setRawSegments([]);
+      setEmbeddedSegments([]);
+      setErrorMsg("");
+      setDebugInfo(null);
+      videoIdRef.current = null;
+      setCurrentVideoId(extractVideoId(window.location.href));
+    };
+    document.addEventListener("yt-transcript-reset", handleReset);
+    return () => document.removeEventListener("yt-transcript-reset", handleReset);
+  }, []);
+
+  // Probe transcript availability for the current video so the trigger button
+  // only appears when a transcript actually exists (or we cannot tell).
+  useEffect(() => {
+    if (!currentVideoId) {
+      setAvailability("none");
+      return;
+    }
+    let cancelled = false;
+    setAvailability("checking");
+    checkTranscriptAvailability(currentVideoId).then((result) => {
+      if (!cancelled) setAvailability(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentVideoId]);
+
   useEffect(() => {
     if (!open || loadState !== "idle") return;
-    const videoId = extractVideoId(window.location.href);
+    const videoId = currentVideoId ?? extractVideoId(window.location.href);
     if (!videoId) {
       setErrorMsg("Could not find a video on this page.");
       setLoadState("error");
@@ -83,37 +236,79 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
     }
     videoIdRef.current = videoId;
     loadTranscript(videoId);
-  }, [open]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, loadState, currentVideoId]);
 
   async function loadTranscript(videoId: string) {
+    const baseDebug: Omit<DebugInfo, "diagnostics" | "rawError" | "tracksLen" | "segmentsLen" | "chunksLen"> = {
+      url: window.location.href,
+      videoId,
+      runtimeId: chrome.runtime?.id,
+      userAgent: navigator.userAgent,
+      timestamp: new Date().toISOString(),
+    };
+    // Anything that resolves after the user navigated to another video must
+    // be discarded — otherwise the old video's transcript shows on the new one.
+    const seq = ++loadSeqRef.current;
+    const isStale = () => seq !== loadSeqRef.current;
+
     try {
       setLoadState("fetching");
 
-      const { segments } = await fetchTranscript(videoId);
+      const { segments, tracksLen, diagnostics } = await fetchTranscript(videoId);
+      if (isStale()) return;
       const chunks = chunkTranscript(segments);
       setRawSegments(chunks);
-
+      setDebugInfo({ ...baseDebug, diagnostics, rawError: null, tracksLen, segmentsLen: segments.length, chunksLen: chunks.length });
       setLoadState("ready");
+      setAvailability("available");
 
       if (settingsRef.current.semanticSearchEnabled) {
         setIsEmbedding(true);
         setLoadProgress(0);
         try {
-          const embedded = await embedSegments(chunks, (pct) =>
-            setLoadProgress(pct)
+          // Embed augmented texts (title/chapter prefix + neighbor overlap);
+          // the chunks themselves keep their exact display text.
+          const embedTexts = buildEmbeddingTexts(chunks, {
+            title: getVideoTitle(),
+            chapters: getYouTubeChapters(videoId),
+          });
+          const embedded = await embedSegments(
+            chunks,
+            (pct) => {
+              if (!isStale()) setLoadProgress(pct);
+            },
+            embedTexts
           );
-          setEmbeddedSegments(embedded);
+          if (!isStale()) setEmbeddedSegments(embedded);
         } catch (embErr) {
           console.warn(
             "[YT Transcript] Embedding failed, falling back to exact search:",
             embErr
           );
         } finally {
-          setIsEmbedding(false);
+          if (!isStale()) setIsEmbedding(false);
         }
       }
     } catch (err) {
-      setErrorMsg("Failed to load transcript.");
+      if (isStale()) return;
+      const rawError = err instanceof Error
+        ? `${err.message}\n\nStack: ${err.stack ?? "n/a"}`
+        : String(err);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const diagnostics = (err as any)?.diagnostics ?? null;
+      setDebugInfo({ ...baseDebug, diagnostics, rawError, tracksLen: null, segmentsLen: null, chunksLen: null });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (err instanceof NoTranscriptError || (err as any)?.noTranscript) {
+        setErrorMsg("This video doesn't have a transcript.");
+        setAvailability("none");
+      } else {
+        setErrorMsg(
+          err instanceof Error && err.message
+            ? `Couldn't load the transcript: ${err.message}`
+            : "Couldn't load the transcript."
+        );
+      }
       setLoadState("error");
     }
   }
@@ -134,6 +329,7 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
     { id: "transcript", label: "Transcript" },
     { id: "chat", label: "AI Chat" },
     { id: "timeline", label: "Timeline" },
+    { id: "debug", label: "🐛 Debug" },
   ];
 
   const embeddedOrRaw: EmbeddedSegment[] =
@@ -147,10 +343,25 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
     setSegments(embeddedOrRaw);
   }, [embeddedOrRaw]);
 
-  const trigger = (
+  // Hide the button entirely when we know the video has no transcript.
+  // "unknown" (probe couldn't reach YouTube) still shows it so a transient
+  // network hiccup never makes the feature disappear.
+  const showTrigger = availability === "available" || availability === "unknown";
+
+  const trigger = showTrigger ? (
     <button
-      onClick={() => setOpen((v) => !v)}
-      title={open ? "Close TranscriptAI" : "Open TranscriptAI"}
+      onClick={() => {
+        if (open && loadState === "error") {
+          // Retry: reset to idle, keep panel open — useEffect will re-trigger load
+          setLoadState("idle");
+          setErrorMsg("");
+          setRawSegments([]);
+          setEmbeddedSegments([]);
+        } else {
+          setOpen((v) => !v);
+        }
+      }}
+      title={open && loadState === "error" ? "Retry loading transcript" : open ? "Close TranscriptAI" : "Open TranscriptAI"}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -185,7 +396,7 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
       </svg>
       TranscriptAI
     </button>
-  );
+  ) : null;
 
   const panel = open ? (
     <div
@@ -360,11 +571,38 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
           <div
             style={{
               padding: 16,
-              color: "#f87171",
               fontSize: 13,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+              alignItems: "flex-start",
             }}
           >
-            {errorMsg}
+            <span style={{ color: availability === "none" ? "var(--yt-spec-text-secondary, #aaa)" : "#f87171" }}>
+              {errorMsg}
+            </span>
+            {availability !== "none" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setErrorMsg("");
+                  setLoadState("idle");
+                }}
+                style={{
+                  background: "var(--yt-spec-10-percent-layer, rgba(255,255,255,0.1))",
+                  border: "none",
+                  borderRadius: 16,
+                  color: "var(--yt-spec-text-primary, #f1f1f1)",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  padding: "6px 16px",
+                  fontFamily: "inherit",
+                }}
+              >
+                Retry
+              </button>
+            )}
           </div>
         )}
 
@@ -381,7 +619,7 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
           </div>
         )}
 
-        {loadState === "ready" && (
+        {loadState === "ready" && tab !== "debug" && (
           <>
             {tab === "transcript" && (
               <TranscriptTab
@@ -415,7 +653,11 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
           </>
         )}
 
-        {loadState === "idle" && (
+        {tab === "debug" && (
+          <DebugTab debugInfo={debugInfo} loadState={loadState} errorMsg={errorMsg} />
+        )}
+
+        {loadState === "idle" && tab !== "debug" && (
           <div
             style={{
               padding: 24,

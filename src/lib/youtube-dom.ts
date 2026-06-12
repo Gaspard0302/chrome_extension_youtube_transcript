@@ -15,6 +15,20 @@ export function findActionBar(): Element | null {
 }
 
 /**
+ * Get the current video's title. The watch-page <h1> is updated on SPA
+ * navigation, so it is always current; document.title is the fallback.
+ */
+export function getVideoTitle(): string | null {
+  const h1 = document.querySelector(
+    "ytd-watch-metadata h1 yt-formatted-string, h1.ytd-watch-metadata"
+  );
+  const fromH1 = h1?.textContent?.trim();
+  if (fromH1) return fromH1;
+  const fromDoc = document.title.replace(/ - YouTube$/, "").trim();
+  return fromDoc || null;
+}
+
+/**
  * Find YouTube's secondary column (recommended videos sidebar).
  */
 export function findSecondaryColumn(): Element | null {

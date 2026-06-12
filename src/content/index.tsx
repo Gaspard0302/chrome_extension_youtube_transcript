@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import Panel from "./components/Panel";
 import "./content.css";
-import { waitForDOMNodes } from "../lib/youtube-dom";
+import { waitForDOMNodes, findActionBar, findSecondaryColumn, findDescriptionContainer } from "../lib/youtube-dom";
 import type { PanelMode } from "../lib/youtube-dom";
 import { getSegments } from "../lib/segment-store";
 import { exactSearch, hybridSearch } from "../lib/search";
@@ -18,6 +18,10 @@ let domObserver: MutationObserver | null = null;
 let playerObserver: MutationObserver | null = null;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let navDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+function isWatchPage(): boolean {
+  return location.pathname === "/watch" && location.search.includes("v=");
+}
 
 function cleanup() {
   reactRoot?.unmount();
@@ -35,6 +39,24 @@ function cleanup() {
   if (heartbeatInterval !== null) {
     clearInterval(heartbeatInterval);
     heartbeatInterval = null;
+  }
+}
+
+/**
+ * Re-insert existing triggerContainer / panelContainer back into the page
+ * after YouTube re-renders the action bar or secondary column (SPA nav).
+ * Does NOT remount React — the existing React tree keeps its state.
+ */
+function reinjectContainers(actionBar: Element, panelNode: Element, panelMode: PanelMode) {
+  if (triggerContainer && !actionBar.contains(triggerContainer)) {
+    actionBar.prepend(triggerContainer);
+  }
+  if (panelContainer && !panelNode.contains(panelContainer)) {
+    if (panelMode === "secondary") {
+      (panelNode as HTMLElement).prepend(panelContainer);
+    } else {
+      panelNode.insertAdjacentElement("afterend", panelContainer);
+    }
   }
 }
 
@@ -76,16 +98,27 @@ function mountApp(
     />
   );
 
-  // Watch for YouTube re-rendering the action bar (common on SPA nav)
+  // Watch for YouTube re-rendering the action bar (common on SPA nav).
+  // On watch pages: re-inject the existing containers instead of full React remount
+  // so the panel state (open, transcript, etc.) is preserved.
   if (heartbeatInterval !== null) clearInterval(heartbeatInterval);
   heartbeatInterval = setInterval(() => {
-    if (!location.pathname.startsWith("/watch")) {
+    if (!isWatchPage()) {
       cleanup();
       return;
     }
     if (triggerContainer && !document.contains(triggerContainer)) {
-      cleanup();
-      waitForPlayerThenDOM();
+      const actionBar = findActionBar();
+      const secondary = findSecondaryColumn();
+      const description = findDescriptionContainer();
+      const panelNode = secondary ?? description;
+      const panelMode: PanelMode = secondary ? "secondary" : "description";
+      if (actionBar && panelNode) {
+        reinjectContainers(actionBar, panelNode, panelMode);
+      } else {
+        // DOM not ready yet — wait for it
+        waitForDOMNodes(reinjectContainers);
+      }
     }
   }, 1500);
 }
@@ -155,10 +188,17 @@ chrome.runtime.onMessage.addListener(
   }
 );
 
+// The content script loads on all youtube.com pages (so it is present when
+// the user SPA-navigates from the homepage to a video), but only starts
+// observers on watch pages — handleNavigation mounts it on later navigations.
+function boot() {
+  if (isWatchPage()) waitForPlayerThenDOM();
+}
+
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", waitForPlayerThenDOM);
+  document.addEventListener("DOMContentLoaded", boot);
 } else {
-  waitForPlayerThenDOM();
+  boot();
 }
 
 // Re-mount on YouTube SPA navigation
@@ -170,12 +210,19 @@ function handleNavigation() {
   if (navDebounceTimer !== null) clearTimeout(navDebounceTimer);
   navDebounceTimer = setTimeout(() => {
     navDebounceTimer = null;
-    if (!location.pathname.startsWith("/watch")) {
+    if (!isWatchPage()) {
+      // Left video pages — tear everything down
       cleanup();
       return;
     }
-    cleanup();
-    setTimeout(waitForPlayerThenDOM, 300);
+    if (!document.getElementById("yt-transcript-app-host")) {
+      // Not yet mounted (e.g. first load) — mount normally
+      waitForPlayerThenDOM();
+      return;
+    }
+    // Still on a watch page (video-to-video nav) — keep React mounted,
+    // reset transcript state for the new video via custom event.
+    document.dispatchEvent(new CustomEvent("yt-transcript-reset"));
   }, 200);
 }
 
@@ -183,18 +230,9 @@ document.addEventListener("yt-navigate-finish", handleNavigation);
 document.addEventListener("yt-page-data-updated", handleNavigation);
 window.addEventListener("popstate", handleNavigation);
 
-// Patch history.pushState/replaceState — YouTube's SPA router calls these directly.
-// This fires synchronously on every navigation regardless of custom event availability.
-const _origPush = history.pushState.bind(history);
-history.pushState = function (...args: Parameters<typeof history.pushState>) {
-  _origPush(...args);
-  handleNavigation();
-};
-const _origReplace = history.replaceState.bind(history);
-history.replaceState = function (...args: Parameters<typeof history.replaceState>) {
-  _origReplace(...args);
-  handleNavigation();
-};
+// NOTE: do NOT patch history.pushState here — content scripts run in an
+// isolated world, so the page's SPA router calls its own binding and the
+// patch would never fire. yt-navigate events + the URL poll below cover it.
 
 // Fallback: poll for URL changes (handles edge cases)
 setInterval(() => {

@@ -7,10 +7,15 @@ import { formatTimestamp, getYouTubeChapters } from "../../lib/transcript";
 // Segmentation helpers
 // ---------------------------------------------------------------------------
 
-const MIN_SECS = 90;   // 1.5 min — never split more finely than this
-const TARGET_SECS = 150; // 2.5 min target per block
 const MAX_BLOCKS = 25;
-const WINDOW = 3;      // segments to average on each side of a candidate boundary
+const WINDOW = 3; // segments to average on each side of a candidate boundary
+
+/** Scale segmentation parameters to video length. */
+function getSegmentationParams(totalDuration: number) {
+  const targetSecs = Math.max(120, Math.min(300, totalDuration / 15));
+  const minSecs = Math.round(targetSecs * 0.6);
+  return { targetSecs, minSecs };
+}
 
 function dot(a: number[], b: number[]): number {
   let s = 0;
@@ -43,13 +48,15 @@ interface TimelineBlock {
  */
 function timeBasedGrouping(segs: EmbeddedSegment[]): TimelineBlock[] {
   if (!segs.length) return [];
+  const last0 = segs[segs.length - 1];
+  const { targetSecs } = getSegmentationParams(last0.start + (last0.duration || 0));
   const blocks: TimelineBlock[] = [];
   let blockSegs: EmbeddedSegment[] = [];
   let startTime = segs[0].start;
 
   for (const seg of segs) {
     blockSegs.push(seg);
-    if (seg.start - startTime >= TARGET_SECS) {
+    if (seg.start - startTime >= targetSecs) {
       const last = blockSegs[blockSegs.length - 1];
       blocks.push({
         startTime,
@@ -82,15 +89,17 @@ function timeBasedGrouping(segs: EmbeddedSegment[]): TimelineBlock[] {
  * 1. For each position i, compute cosine similarity between the average
  *    embedding of the WINDOW segments before and after i.
  *    Low similarity → likely topic change.
- * 2. Find local minima in the similarity curve.
- * 3. Greedily select the deepest minima as boundaries, respecting MIN_SECS.
+ * 2. Smooth the similarity curve (boxcar, radius 2) to suppress noise.
+ * 3. Find local minima in the smoothed curve.
+ * 4. Greedily select the deepest minima as boundaries, respecting adaptive minSecs.
  */
 function semanticGrouping(segs: EmbeddedSegment[]): TimelineBlock[] {
   const n = segs.length;
   const totalDuration = segs[n - 1].start + (segs[n - 1].duration || 0);
+  const { targetSecs, minSecs } = getSegmentationParams(totalDuration);
   const targetCount = Math.min(
     MAX_BLOCKS,
-    Math.max(2, Math.round(totalDuration / TARGET_SECS))
+    Math.max(2, Math.round(totalDuration / targetSecs))
   );
 
   if (n < WINDOW * 2 + 2) return timeBasedGrouping(segs);
@@ -103,30 +112,38 @@ function semanticGrouping(segs: EmbeddedSegment[]): TimelineBlock[] {
     sims.push({ idx: i, score: cosine(left, right) });
   }
 
-  // Step 2: local minima (true valley points in the similarity curve)
-  const minima = sims.filter((p, j, arr) => {
+  // Step 2: smooth the similarity curve (boxcar, radius 2) to suppress noise
+  const smoothed = sims.map((p, j) => {
+    const lo = Math.max(0, j - 2);
+    const hi = Math.min(sims.length - 1, j + 2);
+    const slice = sims.slice(lo, hi + 1);
+    return { idx: p.idx, score: slice.reduce((a, x) => a + x.score, 0) / slice.length };
+  });
+
+  // Step 3: local minima on smoothed curve (true topic boundaries)
+  const minima = smoothed.filter((p, j, arr) => {
     const prev = arr[j - 1]?.score ?? 1;
     const next = arr[j + 1]?.score ?? 1;
     return p.score < prev && p.score < next;
   });
 
-  // Step 3: sort by score ascending (lowest sim = strongest topic break)
+  // Step 4: sort by score ascending (lowest sim = strongest topic break)
   minima.sort((a, b) => a.score - b.score);
 
-  // Step 4: greedily pick boundaries respecting minimum gap
+  // Step 5: greedily pick boundaries respecting minimum gap
   const chosen: number[] = [];
   for (const { idx } of minima) {
     if (chosen.length >= targetCount - 1) break;
     const t = segs[idx].start;
-    if (t < MIN_SECS) continue;
-    if (totalDuration - t < MIN_SECS) continue;
+    if (t < minSecs) continue;
+    if (totalDuration - t < minSecs) continue;
     const tooClose = chosen.some(
-      (c) => Math.abs(segs[c].start - t) < MIN_SECS
+      (c) => Math.abs(segs[c].start - t) < minSecs
     );
     if (!tooClose) chosen.push(idx);
   }
 
-  // Step 5: build blocks
+  // Step 6: build blocks
   chosen.sort((a, b) => a - b);
   const cuts = [0, ...chosen, n];
   return cuts.slice(0, -1).map((start, i) => {
@@ -176,8 +193,13 @@ function chaptersToBlocks(
 
 interface TimelineCache {
   segMethod: "semantic" | "time";
-  blockCount: number;
+  blockHash: string;
   titles: string[];
+}
+
+/** Stable fingerprint of a block list based on start times. */
+function blockHash(blocks: TimelineBlock[]): string {
+  return blocks.map((b) => Math.round(b.startTime)).join(",");
 }
 
 function cacheKey(videoId: string, method: "semantic" | "time") {
@@ -198,7 +220,7 @@ function saveCache(videoId: string, method: "semantic" | "time", blocks: Timelin
   try {
     const data: TimelineCache = {
       segMethod: method,
-      blockCount: blocks.length,
+      blockHash: blockHash(blocks),
       titles: blocks.map((b) => b.title ?? ""),
     };
     localStorage.setItem(cacheKey(videoId, method), JSON.stringify(data));
@@ -239,8 +261,8 @@ export default function TimelineTab({ segments, settings, videoId }: Props) {
     setSegMethod(method);
     hasGeneratedRef.current = false;
 
-    // Detect YouTube creator chapters
-    const rawChapters = getYouTubeChapters();
+    // Detect YouTube creator chapters (videoId guards against stale SPA data)
+    const rawChapters = getYouTubeChapters(videoId ?? undefined);
     if (rawChapters) {
       const totalDuration = segments[segments.length - 1].start +
         (segments[segments.length - 1].duration || 0);
@@ -255,7 +277,7 @@ export default function TimelineTab({ segments, settings, videoId }: Props) {
     // Try to restore cached titles for this video + method
     if (videoId) {
       const cached = loadCache(videoId, method);
-      if (cached && cached.blockCount === newBlocks.length) {
+      if (cached && cached.blockHash === blockHash(newBlocks)) {
         // Patch titles onto freshly-computed blocks (no AI call needed)
         const restored = newBlocks.map((b, i) => ({
           ...b,
@@ -284,14 +306,25 @@ export default function TimelineTab({ segments, settings, videoId }: Props) {
     setGenerating(true);
     setGenError("");
 
-    const inputBlocks = currentBlocks.map((b) => ({
-      startTime: b.startTime,
-      endTime: b.endTime,
-      text: b.segments
-        .map((s) => s.text)
-        .join(" ")
-        .slice(0, 600),
-    }));
+    const inputBlocks = currentBlocks.map((b) => {
+      const full = b.segments.map((s) => s.text).join(" ");
+      const len = full.length;
+      const text =
+        len <= 600
+          ? full
+          : [
+              full.slice(0, 200),
+              full.slice(Math.floor(len / 2) - 100, Math.floor(len / 2) + 100),
+              full.slice(-200),
+            ].join(" … ");
+      return { startTime: b.startTime, endTime: b.endTime, text };
+    });
+
+    if (!chrome.runtime?.id) {
+      setGenError("Extension was reloaded. Please refresh the page.");
+      setGenerating(false);
+      return;
+    }
 
     try {
       const response = await chrome.runtime.sendMessage({

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TranscriptAI for YouTube",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Search and chat with YouTube transcripts using AI",
   "permissions": [
     "storage",
@@ -25,7 +25,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.youtube.com/watch*"],
+      "matches": ["https://www.youtube.com/*"],
       "js": ["src/content/index.tsx"],
       "run_at": "document_idle"
     }

@@ -41,11 +41,6 @@ chrome.runtime.onMessage.addListener(
       return true;
     }
 
-    if (message.type === "FETCH_TRANSCRIPT_URL") {
-      handleFetchTranscriptUrl(message.payload.url, sendResponse);
-      return true;
-    }
-
     if (message.type === "EMBED_TEXT") {
       handleEmbedText(message.payload.text, sendResponse);
       return true;
@@ -80,15 +75,15 @@ async function handleGetCaptionTracks(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+          'User-Agent': 'com.google.android.youtube/20.10.38 (Linux; U; Android 11) gzip',
           'X-YouTube-Client-Name': '3',
-          'X-YouTube-Client-Version': '19.09.37',
+          'X-YouTube-Client-Version': '20.10.38',
         },
         body: JSON.stringify({
           context: {
             client: {
               clientName: 'ANDROID',
-              clientVersion: '19.09.37',
+              clientVersion: '20.10.38',
               androidSdkVersion: 30,
               hl: 'en',
               gl: 'US',
@@ -104,35 +99,21 @@ async function handleGetCaptionTracks(
     }
     const data = await res.json();
     const tracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-    sendResponse({ tracks: Array.isArray(tracks) ? tracks : [] });
+    sendResponse({
+      tracks: Array.isArray(tracks) ? tracks : [],
+      // Lets the caller distinguish "playable video, genuinely no captions"
+      // from a failed/blocked request.
+      playability: data?.playabilityStatus?.status ?? null,
+    });
   } catch (err) {
     sendResponse({ error: err instanceof Error ? err.message : String(err) });
   }
 }
 
-/**
- * Fetch a transcript timedtext URL through the background worker.
- * Content scripts can't reliably fetch these due to missing cookies / CORS.
- * The background worker has full network access and shares the browser's cookies.
- */
-async function handleFetchTranscriptUrl(
-  url: string,
-  sendResponse: (r: unknown) => void
-) {
-  try {
-    const res = await fetch(url, {
-      headers: { "Accept-Language": "en-US,en;q=0.9" },
-    });
-    if (!res.ok) {
-      sendResponse({ error: `HTTP ${res.status}` });
-      return;
-    }
-    const text = await res.text();
-    sendResponse({ text });
-  } catch (err) {
-    sendResponse({ error: err instanceof Error ? err.message : String(err) });
-  }
-}
+// NOTE: there is intentionally NO background timedtext fetcher. Timedtext URLs
+// are session-bound (signature/expire) and must be fetched from the content
+// script with credentials: "include" — the background worker carries no
+// youtube.com cookies and gets empty 200 bodies. See CLAUDE.md.
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildProviderInstance(
