@@ -86,3 +86,14 @@ Content scripts run in an ISOLATED world. The page's SPA router calls the page-w
 - The hand-rolled protobuf `params` encoding has broken other tools when YouTube changed it. The robust source is YouTube's own data: POST `/youtubei/v1/next` (WEB context, with cookies) and regex out `"getTranscriptEndpoint":{"params":"..."}` — that is exactly what the native transcript panel sends. Hand-built params remain as fallback.
 - The response can be the legacy `transcriptBodyRenderer.cueGroups` OR the current `transcriptSegmentListRenderer.initialSegments[]` (with `startMs`/`endMs`/`snippet.runs`). Parse both, or you'll report "0 cues" on videos that have transcripts.
 - `get_transcript` needs only the videoId — always try it BEFORE concluding "no transcript" from missing caption tracks.
+
+---
+
+## June 2026 lockdown: anonymous Innertube is dead, get_transcript needs SAPISIDHASH
+
+Verified by direct curl testing (2026-06):
+
+- **All anonymous Innertube clients return `LOGIN_REQUIRED`** (ANDROID, ANDROID_VR, TVHTML5, WEB_EMBEDDED — even the anonymous watch page HTML). The cookie-less background ANDROID path is now a last resort that rarely works.
+- **`get_transcript` returns 400 "Precondition check failed"** without the `Authorization: SAPISIDHASH <ts>_<sha1(ts SAPISID origin)>` header, even when session cookies are sent. SAPISID is a non-httpOnly cookie, readable via `document.cookie` from the content script. See `buildSapisidAuth` in `src/lib/transcript.ts`.
+- **Timedtext URLs can now 404 after stripping `exp`** (it appears `exp` joined the signed params on some URLs). Don't assume the strip is safe — try both variants (stripped first, then original).
+- **The bulletproof fallback is POT capture**: the page's player fetches timedtext with a valid Proof-of-Origin Token that extensions cannot mint. The background worker records `*/api/timedtext*` requests via `webRequest` (per tab, in `chrome.storage.session`); a MAIN-world bridge (`src/content/main-world.ts`, manifest `world: "MAIN"`) can nudge the player to load its captions module to trigger such a request, and exposes `#movie_player.getPlayerResponse()` (always current after SPA nav). NEVER modify a captured URL beyond swapping `fmt` via string surgery — re-serializing through `new URL()` re-encodes params and can break the signature.

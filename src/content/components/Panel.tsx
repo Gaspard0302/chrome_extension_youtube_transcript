@@ -582,6 +582,12 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
               {errorMsg}
             </span>
             {availability !== "none" && (
+              <span style={{ color: "var(--yt-spec-text-secondary, #aaa)", fontSize: 12 }}>
+                Tip: turn on captions (CC) in the player, then hit Retry — the
+                extension can reuse the player's own caption request.
+              </span>
+            )}
+            {availability !== "none" && (
               <button
                 type="button"
                 onClick={() => {

@@ -76,6 +76,7 @@ export type BackgroundMessage =
   | { type: "GET_SETTINGS" }
   | { type: "SAVE_SETTINGS"; payload: Partial<Settings> }
   | { type: "GET_CAPTION_TRACKS"; payload: { videoId: string } }
+  | { type: "GET_CAPTURED_TIMEDTEXT"; payload: { videoId: string } }
   | { type: "EMBED_TEXT"; payload: { text: string } }
   | { type: "GENERATE_TIMELINE"; payload: TimelinePayload };
 

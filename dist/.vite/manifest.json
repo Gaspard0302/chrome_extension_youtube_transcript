@@ -1,6 +1,6 @@
 {
   "../../../../../@crx/manifest": {
-    "file": "assets/crx-manifest.js-CKemYEtY.js",
+    "file": "assets/crx-manifest.js-Dx9rREsA.js",
     "name": "crx-manifest.js",
     "src": "../../../../../@crx/manifest",
     "isEntry": true
@@ -21,7 +21,7 @@
     "name": "providers"
   },
   "index.tsx-loader.js": {
-    "file": "assets/index.tsx-loader-0KXeUeFQ.js",
+    "file": "assets/index.tsx-loader-S4c7z6BE.js",
     "src": "index.tsx-loader.js"
   },
   "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm": {
@@ -29,7 +29,7 @@
     "src": "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm"
   },
   "src/background/index.ts": {
-    "file": "assets/index.ts-De3Tmkng.js",
+    "file": "assets/index.ts-BQeVp49S.js",
     "name": "index.ts",
     "src": "src/background/index.ts",
     "isEntry": true,
@@ -38,7 +38,7 @@
     ]
   },
   "src/content/index.tsx": {
-    "file": "assets/index.tsx-DB1z6QM4.js",
+    "file": "assets/index.tsx-CfecBnyX.js",
     "name": "index.tsx",
     "src": "src/content/index.tsx",
     "isEntry": true,
@@ -49,6 +49,12 @@
     "css": [
       "assets/index-CMxB8zIV.css"
     ]
+  },
+  "src/content/main-world.ts": {
+    "file": "assets/main-world.ts-DXJy0tTB.js",
+    "name": "main-world.ts",
+    "src": "src/content/main-world.ts",
+    "isEntry": true
   },
   "src/offscreen/index.html": {
     "file": "assets/offscreen-C1Lu6VM6.js",

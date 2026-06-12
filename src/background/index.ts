@@ -41,6 +41,15 @@ chrome.runtime.onMessage.addListener(
       return true;
     }
 
+    if (message.type === "GET_CAPTURED_TIMEDTEXT") {
+      handleGetCapturedTimedtext(
+        message.payload.videoId,
+        _sender.tab?.id,
+        sendResponse
+      );
+      return true;
+    }
+
     if (message.type === "EMBED_TEXT") {
       handleEmbedText(message.payload.text, sendResponse);
       return true;
@@ -59,6 +68,65 @@ type CaptionTrack = {
   languageCode: string;
   kind?: string;
 };
+
+// ---------------------------------------------------------------------------
+// POT capture — observe the YouTube player's own timedtext requests.
+// The player generates a valid Proof-of-Origin Token (pot=...) via BotGuard,
+// which extensions cannot mint themselves. By watching its requests we get a
+// fully working URL the content script can simply re-fetch (with cookies).
+// Captures are kept per tab in chrome.storage.session so they survive
+// service-worker restarts.
+// ---------------------------------------------------------------------------
+
+type CapturedTimedtext = { url: string; videoId: string | null; ts: number };
+
+function captureKey(tabId: number): string {
+  return `timedtext_${tabId}`;
+}
+
+try {
+  chrome.webRequest.onBeforeRequest.addListener(
+    (details) => {
+      if (details.tabId < 0 || !details.url.includes("/api/timedtext")) return;
+      let videoId: string | null = null;
+      try {
+        videoId = new URL(details.url).searchParams.get("v");
+      } catch {
+        videoId = null;
+      }
+      const entry: CapturedTimedtext = { url: details.url, videoId, ts: Date.now() };
+      const key = captureKey(details.tabId);
+      chrome.storage.session.get(key, (data) => {
+        const list: CapturedTimedtext[] = Array.isArray(data?.[key]) ? data[key] : [];
+        list.unshift(entry);
+        chrome.storage.session.set({ [key]: list.slice(0, 5) });
+      });
+    },
+    { urls: ["*://*.youtube.com/api/timedtext*"] }
+  );
+} catch (err) {
+  console.warn("[YT Transcript] webRequest capture unavailable:", err);
+}
+
+function handleGetCapturedTimedtext(
+  videoId: string,
+  tabId: number | undefined,
+  sendResponse: (r: unknown) => void
+) {
+  if (tabId == null) {
+    sendResponse({ url: null });
+    return;
+  }
+  chrome.storage.session.get(captureKey(tabId), (data) => {
+    const list: CapturedTimedtext[] = Array.isArray(data?.[captureKey(tabId)])
+      ? data[captureKey(tabId)]
+      : [];
+    const match = list.find(
+      (e) => e.videoId === videoId || e.url.includes(`v=${videoId}`)
+    );
+    sendResponse({ url: match?.url ?? null });
+  });
+}
 
 async function handleGetCaptionTracks(
   videoId: string,

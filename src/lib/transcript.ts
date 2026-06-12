@@ -121,6 +121,46 @@ function readPlayerResponseFromDOM(expectedVideoId: string): PlayerResponseInfo 
 }
 
 /**
+ * Ask the MAIN-world bridge (src/content/main-world.ts) for the live player's
+ * getPlayerResponse(). This is always current for the video being watched —
+ * the most reliable source after SPA navigation — and costs no network.
+ */
+function getPlayerResponseViaBridge(videoId: string): Promise<PlayerResponseInfo | null> {
+  return new Promise((resolve) => {
+    const reqId = Math.random().toString(36).slice(2);
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve(null);
+    }, 1000);
+
+    function onResult(e: Event) {
+      try {
+        const parsed = JSON.parse(String((e as CustomEvent).detail ?? "null"));
+        if (parsed?.reqId !== reqId) return; // someone else's request
+        cleanup();
+        if (!parsed.pr) {
+          resolve(null);
+          return;
+        }
+        const info = toPlayerResponseInfo(parsed.pr);
+        resolve(info.videoId === videoId ? info : null);
+      } catch {
+        cleanup();
+        resolve(null);
+      }
+    }
+
+    function cleanup() {
+      clearTimeout(timer);
+      document.removeEventListener("ytta-pr-result", onResult);
+    }
+
+    document.addEventListener("ytta-pr-result", onResult);
+    document.dispatchEvent(new CustomEvent("ytta-get-pr", { detail: reqId }));
+  });
+}
+
+/**
  * Re-fetch the watch page HTML for this exact videoId and parse its player
  * response. Unlike the DOM, this always reflects the current video, and the
  * same-origin request carries session cookies so the embedded timedtext URLs
@@ -145,21 +185,29 @@ async function fetchWatchPagePlayerResponse(videoId: string): Promise<PlayerResp
  */
 async function fetchAndroidPlayerViaBackground(
   videoId: string
-): Promise<{ tracks: CaptionTrack[]; playability: string | null } | null> {
+): Promise<{ tracks: CaptionTrack[]; playability: string | null } | { error: string }> {
   return new Promise((resolve) => {
     try {
       chrome.runtime.sendMessage(
         { type: "GET_CAPTION_TRACKS", payload: { videoId } },
         (resp: { tracks?: CaptionTrack[]; playability?: string | null; error?: string } | undefined) => {
-          if (chrome.runtime.lastError || !resp || resp.error) {
-            resolve(null);
+          if (chrome.runtime.lastError) {
+            resolve({ error: chrome.runtime.lastError.message ?? "runtime error" });
+            return;
+          }
+          if (!resp) {
+            resolve({ error: "no response from background" });
+            return;
+          }
+          if (resp.error) {
+            resolve({ error: resp.error });
             return;
           }
           resolve({ tracks: resp.tracks ?? [], playability: resp.playability ?? null });
         }
       );
-    } catch {
-      resolve(null);
+    } catch (err) {
+      resolve({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 }
@@ -168,7 +216,7 @@ async function fetchAndroidPlayerViaBackground(
 // Caption track resolution (multi-source, cached per video)
 // ---------------------------------------------------------------------------
 
-type TrackSource = "dom" | "android" | "watch-html" | "none";
+type TrackSource = "dom" | "player" | "android" | "watch-html" | "none";
 
 interface ResolvedTracks {
   tracks: CaptionTrack[];
@@ -231,23 +279,24 @@ async function resolveCaptionTracks(
     }
   }
 
-  // Source 2: Innertube ANDROID via the background worker.
-  const android = await fetchAndroidPlayerViaBackground(videoId);
-  if (android) {
+  // Source 2: the live player's own player response via the MAIN-world bridge
+  // (always current, validated, free).
+  const live = await getPlayerResponseViaBridge(videoId);
+  if (live) {
     diag.steps.push({
-      label: "ANDROID Innertube (background)",
-      status: android.tracks.length > 0 ? "ok" : "warn",
-      detail: `playability=${android.playability}, ${android.tracks.length} track(s): ${describeTracks(android.tracks)}`,
+      label: "Live player response (bridge)",
+      status: live.tracks.length > 0 ? "ok" : "warn",
+      detail: `playability=${live.playability}, ${live.tracks.length} track(s): ${describeTracks(live.tracks)}`,
     });
-    if (android.tracks.length > 0) {
-      return remember({ tracks: android.tracks, source: "android", noCaptions: false });
+    if (live.tracks.length > 0) {
+      return remember({ tracks: live.tracks, source: "player", noCaptions: false });
     }
-    if (android.playability === "OK") noCaptions = true;
+    if (live.playability === "OK") noCaptions = true;
   } else {
     diag.steps.push({
-      label: "ANDROID Innertube (background)",
+      label: "Live player response (bridge)",
       status: "warn",
-      detail: "Background request failed or returned an error",
+      detail: "Bridge unavailable or player response is for a different video",
     });
   }
 
@@ -277,6 +326,28 @@ async function resolveCaptionTracks(
       status: "warn",
       detail: err instanceof Error ? err.message : String(err),
     });
+  }
+
+  // Source 4 (last resort): Innertube ANDROID via the background worker.
+  // YouTube now answers LOGIN_REQUIRED to anonymous clients on many networks,
+  // so this rarely succeeds anymore — but it costs nothing to try.
+  const android = await fetchAndroidPlayerViaBackground(videoId);
+  if ("error" in android) {
+    diag.steps.push({
+      label: "ANDROID Innertube (background)",
+      status: "warn",
+      detail: android.error,
+    });
+  } else {
+    diag.steps.push({
+      label: "ANDROID Innertube (background)",
+      status: android.tracks.length > 0 ? "ok" : "warn",
+      detail: `playability=${android.playability}, ${android.tracks.length} track(s): ${describeTracks(android.tracks)}`,
+    });
+    if (android.tracks.length > 0) {
+      return remember({ tracks: android.tracks, source: "android", noCaptions: false });
+    }
+    if (android.playability === "OK") noCaptions = true;
   }
 
   const result: ResolvedTracks = { tracks: [], source: "none", noCaptions };
@@ -346,8 +417,12 @@ export async function fetchTranscript(
   const resolved = await resolveCaptionTracks(videoId, diag);
 
   if (resolved.tracks.length === 0) {
-    // get_transcript needs only the videoId — always try it before giving up.
-    const segs = await tryGetTranscriptApi(videoId, undefined, diag);
+    // Track resolution failed, but the video may still have captions:
+    // get_transcript needs only the videoId, and the player's own POT URL
+    // works regardless of what we could resolve.
+    const segs =
+      (await tryGetTranscriptApi(videoId, undefined, diag)) ??
+      (await tryCapturedTimedtext(videoId, undefined, diag, !resolved.noCaptions));
     if (segs && segs.length > 0) {
       return { segments: segs, tracksLen: 0, diagnostics: diag };
     }
@@ -370,35 +445,45 @@ export async function fetchTranscript(
     detail: `"${preferred.name?.simpleText ?? "unknown"}" (lang=${preferred.languageCode}, kind=${preferred.kind ?? "manual"}, source=${resolved.source})`,
   });
 
-  // Path 1: get_transcript API
-  const gtSegments = await tryGetTranscriptApi(videoId, preferred.languageCode, diag);
-  if (gtSegments && gtSegments.length > 0) {
-    return { segments: gtSegments, tracksLen: resolved.tracks.length, diagnostics: diag };
-  }
-
-  // Path 2: timedtext URL of the preferred track
   let lastErr: Error | null = null;
+
+  // Path 1: timedtext URL of the preferred track (several URL variants)
   try {
     const segments = await fetchTranscriptData(preferred.baseUrl, diag);
     return { segments, tracksLen: resolved.tracks.length, diagnostics: diag };
   } catch (err) {
     lastErr = err instanceof Error ? err : new Error(String(err));
-    diag.steps.push({
-      label: `Timedtext (${resolved.source}) failed`,
-      status: "warn",
-      detail: lastErr.message,
-    });
   }
 
-  // Path 3: resolve fresh tracks (cached URLs may have expired) and retry once
+  // Path 2: a timedtext URL the player already fetched itself (passive — no
+  // UI side effects; present when the user watches with captions on)
+  let segments = await tryCapturedTimedtext(videoId, preferred.languageCode, diag, false);
+  if (segments) {
+    return { segments, tracksLen: resolved.tracks.length, diagnostics: diag };
+  }
+
+  // Path 3: get_transcript API (with SAPISIDHASH auth)
+  const gtSegments = await tryGetTranscriptApi(videoId, preferred.languageCode, diag);
+  if (gtSegments && gtSegments.length > 0) {
+    return { segments: gtSegments, tracksLen: resolved.tracks.length, diagnostics: diag };
+  }
+
+  // Path 4: nudge the player to load captions and capture its POT URL —
+  // briefly flashes captions on, but works when everything else is blocked
+  segments = await tryCapturedTimedtext(videoId, preferred.languageCode, diag, true);
+  if (segments) {
+    return { segments, tracksLen: resolved.tracks.length, diagnostics: diag };
+  }
+
+  // Path 5: resolve fresh tracks (cached URLs may have expired) and retry once
   trackCache.delete(videoId);
   try {
     const freshResolved = await resolveCaptionTracks(videoId, diag, true);
     if (freshResolved.tracks.length > 0) {
       const freshTrack = pickPreferredTrack(freshResolved.tracks);
       if (freshTrack.baseUrl !== preferred.baseUrl) {
-        const segments = await fetchTranscriptData(freshTrack.baseUrl, diag);
-        return { segments, tracksLen: freshResolved.tracks.length, diagnostics: diag };
+        const freshSegments = await fetchTranscriptData(freshTrack.baseUrl, diag);
+        return { segments: freshSegments, tracksLen: freshResolved.tracks.length, diagnostics: diag };
       }
     }
   } catch (err) {
@@ -415,6 +500,42 @@ export async function fetchTranscript(
 // Innertube get_transcript
 // ---------------------------------------------------------------------------
 
+function getCookieValue(name: string): string | null {
+  const m = document.cookie.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+/**
+ * Compute the SAPISIDHASH Authorization header YouTube's own page sends with
+ * Innertube requests. Cookies alone are no longer enough: without this header
+ * a logged-in session gets 400 "Precondition check failed" from endpoints
+ * like get_transcript. SAPISID is a non-httpOnly cookie, so the content
+ * script can read it. Returns null when logged out (header then omitted).
+ */
+async function buildSapisidAuth(): Promise<string | null> {
+  const sapisid = getCookieValue("SAPISID") ?? getCookieValue("__Secure-3PAPISID");
+  if (!sapisid) return null;
+  const ts = Math.floor(Date.now() / 1000);
+  const data = new TextEncoder().encode(`${ts} ${sapisid} https://www.youtube.com`);
+  const digest = await crypto.subtle.digest("SHA-1", data);
+  const hex = Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return `SAPISIDHASH ${ts}_${hex}`;
+}
+
+async function innertubeWebHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Youtube-Client-Name": "1",
+    "X-Youtube-Client-Version": "2.20250530.01.00",
+    "X-Origin": "https://www.youtube.com",
+  };
+  const auth = await buildSapisidAuth();
+  if (auth) headers["Authorization"] = auth;
+  return headers;
+}
+
 /**
  * Get the exact get_transcript `params` YouTube's own transcript panel would
  * use, by asking the /next endpoint for this video. Surviving protobuf format
@@ -426,7 +547,7 @@ async function getTranscriptParamsFromNext(videoId: string): Promise<string | nu
     const res = await fetch("https://www.youtube.com/youtubei/v1/next?prettyPrint=false", {
       method: "POST",
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
+      headers: await innertubeWebHeaders(),
       body: JSON.stringify({
         context: { client: { clientName: "WEB", clientVersion: "2.20250530.01.00", hl: "en", gl: "US" } },
         videoId,
@@ -435,7 +556,13 @@ async function getTranscriptParamsFromNext(videoId: string): Promise<string | nu
     if (!res.ok) return null;
     const text = await res.text();
     const m = text.match(/"getTranscriptEndpoint"\s*:\s*\{\s*"params"\s*:\s*"([^"]+)"/);
-    return m ? m[1] : null;
+    if (!m) return null;
+    // The raw JSON text may contain escapes like = — decode them.
+    try {
+      return JSON.parse(`"${m[1]}"`) as string;
+    } catch {
+      return m[1];
+    }
   } catch {
     return null;
   }
@@ -529,16 +656,20 @@ async function tryGetTranscriptApi(
         {
           method: "POST",
           credentials: "include",
-          headers: { "Content-Type": "application/json" },
+          headers: await innertubeWebHeaders(),
           body: JSON.stringify({
             context: { client: { clientName: "WEB", clientVersion: "2.20250530.01.00", hl: "en", gl: "US" } },
             params,
-            externalVideoId: videoId,
           }),
         }
       );
       if (!res.ok) {
-        diag.steps.push({ label: `get_transcript (${label})`, status: "warn", detail: `HTTP ${res.status}` });
+        const errBody = await res.text().catch(() => "");
+        diag.steps.push({
+          label: `get_transcript (${label})`,
+          status: "warn",
+          detail: `HTTP ${res.status}: ${errBody.slice(0, 160)}`,
+        });
         continue;
       }
       const data = await res.json();
@@ -560,105 +691,188 @@ async function tryGetTranscriptApi(
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch transcript data from a timedtext baseUrl, from the content script so
- * session cookies attach (required for WEB-client URLs).
- * Tries fmt=json3 first, then falls back to the default XML format.
+ * Remove the exp parameter via string surgery. Round-tripping through the URL
+ * class re-encodes every query param, which can invalidate the URL signature —
+ * the URL string must otherwise stay byte-identical.
+ */
+function stripExpParam(url: string): string {
+  return url.replace(/([?&])exp=[^&]*(&?)/, (_m, pre, post) => (post ? pre : ""));
+}
+
+/** Set or replace the fmt parameter without re-encoding the rest of the URL. */
+function withFormat(url: string, fmt: string): string {
+  if (/[?&]fmt=/.test(url)) return url.replace(/([?&])fmt=[^&]*/, `$1fmt=${fmt}`);
+  return url + (url.includes("?") ? "&" : "?") + "fmt=" + fmt;
+}
+
+function parseJson3Transcript(body: string): TranscriptSegment[] {
+  const data = JSON.parse(body) as {
+    events: Array<{
+      tStartMs: number;
+      dDurationMs: number;
+      segs?: Array<{ utf8: string }>;
+    }>;
+  };
+  const segments: TranscriptSegment[] = [];
+  for (const event of data.events ?? []) {
+    if (!event.segs) continue;
+    const text = event.segs
+      .map((s) => s.utf8)
+      .join("")
+      .replace(/\n/g, " ")
+      .trim();
+    if (text) {
+      segments.push({
+        text,
+        start: event.tStartMs / 1000,
+        duration: event.dDurationMs / 1000,
+      });
+    }
+  }
+  if (segments.length === 0) throw new Error("JSON3 parsed but yielded 0 segments");
+  return segments;
+}
+
+/** Fetch one timedtext URL (with cookies) and parse whatever format comes back. */
+async function fetchAndParseTimedtext(
+  url: string,
+  diag: FetchDiagnostics,
+  label: string
+): Promise<TranscriptSegment[]> {
+  const res = await fetch(url, {
+    credentials: "include",
+    headers: { "Accept-Language": "en-US,en;q=0.9" },
+  });
+  const body = await res.text();
+  const trimmed = body.trimStart();
+  const isHtmlError = trimmed.startsWith("<!DOCTYPE") || trimmed.startsWith("<html");
+  const ok = res.ok && body.length > 0 && !isHtmlError;
+  diag.steps.push({
+    label: `Timedtext (${label})`,
+    status: ok ? "ok" : "warn",
+    detail: `status=${res.status}, body=${body.length} bytes${ok ? "" : `, preview: ${JSON.stringify(body.slice(0, 120))}`}`,
+  });
+  if (!res.ok || isHtmlError) throw new Error(`HTTP ${res.status}${isHtmlError ? " (HTML error page)" : ""}`);
+  if (!body) throw new Error("empty 200 body (POT token required)");
+
+  if (trimmed.startsWith("{")) return parseJson3Transcript(body);
+  return parseXmlTranscript(body);
+}
+
+/**
+ * Fetch a caption track's transcript, trying URL variants in order:
+ *   1. exp stripped, fmt=json3   (historically the working combination)
+ *   2. original URL, fmt=json3   (in case exp became signature-protected)
+ *   3. exp stripped, default format
+ *   4. original URL, default format
  */
 async function fetchTranscriptData(baseUrl: string, diag: FetchDiagnostics): Promise<TranscriptSegment[]> {
-  // Strip exp=xpe / exp=xpv — these flags enable Proof-of-Origin Token (POT)
-  // enforcement (server silently returns an empty 200 body without the token).
-  // exp is not in sparams, so removing it does not invalidate the signature.
-  const cleanBase = (() => {
+  const stripped = stripExpParam(baseUrl);
+  const candidates: { url: string; label: string }[] =
+    stripped !== baseUrl
+      ? [
+          { url: withFormat(stripped, "json3"), label: "exp-stripped json3" },
+          { url: withFormat(baseUrl, "json3"), label: "original json3" },
+          { url: stripped, label: "exp-stripped default" },
+          { url: baseUrl, label: "original default" },
+        ]
+      : [
+          { url: withFormat(baseUrl, "json3"), label: "json3" },
+          { url: baseUrl, label: "default" },
+        ];
+
+  let lastErr: Error | null = null;
+  for (const { url, label } of candidates) {
     try {
-      const u = new URL(baseUrl);
-      u.searchParams.delete("exp");
-      return u.toString();
-    } catch {
-      return baseUrl;
+      return await fetchAndParseTimedtext(url, diag, label);
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
     }
-  })();
-
-  if (baseUrl !== cleanBase) {
-    diag.steps.push({
-      label: "Stripped exp param",
-      status: "ok",
-      detail: "Removed exp from timedtext URL to disable POT enforcement.",
-    });
   }
+  throw lastErr ?? new Error("timedtext fetch failed");
+}
 
-  // Attempt 1: JSON3 format
-  let json3Status = "skipped";
-  try {
-    const json3Url = cleanBase + "&fmt=json3";
-    const res = await fetch(json3Url, { credentials: "include", headers: { "Accept-Language": "en-US,en;q=0.9" } });
-    const contentLength = res.headers.get("content-length") ?? "unknown";
-    const body = await res.text();
-    const isHtmlError = body.trimStart().startsWith("<!DOCTYPE") || body.trimStart().startsWith("<html");
-    diag.steps.push({
-      label: "HTTP response (JSON3)",
-      status: (body.length > 0 && !isHtmlError) ? "ok" : "error",
-      detail: `status=${res.status}, content-length=${contentLength}, body=${body.length} bytes, preview: ${JSON.stringify(body.slice(0, 200))}`,
-    });
-    if (isHtmlError) throw new Error(`HTTP ${res.status}: server returned HTML error page`);
-    json3Status = `${body.length} bytes`;
-    if (body) {
-      const data = JSON.parse(body) as {
-        events: Array<{
-          tStartMs: number;
-          dDurationMs: number;
-          segs?: Array<{ utf8: string }>;
-        }>;
-      };
-      const segments: TranscriptSegment[] = [];
-      for (const event of data.events ?? []) {
-        if (!event.segs) continue;
-        const text = event.segs
-          .map((s) => s.utf8)
-          .join("")
-          .replace(/\n/g, " ")
-          .trim();
-        if (text) {
-          segments.push({
-            text,
-            start: event.tStartMs / 1000,
-            duration: event.dDurationMs / 1000,
-          });
+// ---------------------------------------------------------------------------
+// POT capture — re-use the player's own timedtext URL
+// ---------------------------------------------------------------------------
+
+function getCapturedTimedtextUrl(videoId: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage(
+        { type: "GET_CAPTURED_TIMEDTEXT", payload: { videoId } },
+        (resp: { url?: string | null } | undefined) => {
+          if (chrome.runtime.lastError || !resp) {
+            resolve(null);
+            return;
+          }
+          resolve(resp.url ?? null);
         }
-      }
-      if (segments.length > 0) {
-        diag.steps.push({ label: "Fetch JSON3 transcript", status: "ok", detail: `${segments.length} events, ${json3Status}` });
-        return segments;
-      }
-      json3Status += " (0 events after filtering)";
-    } else {
-      json3Status = "empty body";
+      );
+    } catch {
+      resolve(null);
     }
-  } catch (err) {
-    json3Status = `Error: ${err instanceof Error ? err.message : String(err)}`;
-  }
-  diag.steps.push({ label: "Fetch JSON3 transcript", status: "warn", detail: json3Status + " — falling back to XML" });
+  });
+}
 
-  // Attempt 2: XML format
-  let xmlStatus = "skipped";
-  try {
-    const xmlRes = await fetch(cleanBase, { credentials: "include", headers: { "Accept-Language": "en-US,en;q=0.9" } });
-    const xmlContentLength = xmlRes.headers.get("content-length") ?? "unknown";
-    const xml = await xmlRes.text();
-    const xmlIsHtmlError = xml.trimStart().startsWith("<!DOCTYPE") || xml.trimStart().startsWith("<html");
+/**
+ * The page's player fetches timedtext with a valid Proof-of-Origin Token that
+ * extensions cannot mint themselves; the background worker records those
+ * requests (webRequest) and we re-fetch the captured URL with the user's
+ * cookies. When allowNudge is set and nothing was captured yet, the MAIN-world
+ * bridge briefly enables the player's caption module to trigger such a request.
+ */
+async function tryCapturedTimedtext(
+  videoId: string,
+  lang: string | undefined,
+  diag: FetchDiagnostics,
+  allowNudge: boolean
+): Promise<TranscriptSegment[] | null> {
+  let url = await getCapturedTimedtextUrl(videoId);
+
+  if (!url && allowNudge) {
     diag.steps.push({
-      label: "HTTP response (XML)",
-      status: (xml.length > 0 && !xmlIsHtmlError) ? "ok" : "error",
-      detail: `status=${xmlRes.status}, content-length=${xmlContentLength}, body=${xml.length} bytes, preview: ${JSON.stringify(xml.slice(0, 200))}`,
+      label: "Nudge player captions",
+      status: "warn",
+      detail: "Asking the player to load captions so its POT-authorized URL can be captured",
     });
-    if (xmlIsHtmlError) throw new Error(`HTTP ${xmlRes.status}: server returned HTML error page`);
-    xmlStatus = `${xml.length} bytes`;
-    const segments = parseXmlTranscript(xml);
-    diag.steps.push({ label: "Fetch XML transcript", status: "ok", detail: `${segments.length} segments, ${xmlStatus}` });
-    return segments;
+    document.dispatchEvent(
+      new CustomEvent("ytta-nudge-captions", { detail: JSON.stringify({ lang: lang ?? "en" }) })
+    );
+    for (let i = 0; i < 10 && !url; i++) {
+      await new Promise((r) => setTimeout(r, 400));
+      url = await getCapturedTimedtextUrl(videoId);
+    }
+  }
+
+  if (!url) {
+    diag.steps.push({
+      label: "Captured timedtext URL",
+      status: "warn",
+      detail: allowNudge ? "No player timedtext request captured after nudge" : "Nothing captured yet",
+    });
+    return null;
+  }
+
+  diag.steps.push({
+    label: "Captured timedtext URL",
+    status: "ok",
+    detail: "Re-using the player's own POT-authorized request URL",
+  });
+  try {
+    return await fetchAndParseTimedtext(withFormat(url, "json3"), diag, "captured json3");
+  } catch {
+    // fmt swap may not be allowed — retry the captured URL byte-identical
+  }
+  try {
+    return await fetchAndParseTimedtext(url, diag, "captured verbatim");
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    diag.steps.push({ label: "Fetch XML transcript", status: "error", detail: `${xmlStatus} — ${msg}` });
-    throw new Error(msg);
+    diag.steps.push({
+      label: "Captured URL fetch failed",
+      status: "warn",
+      detail: err instanceof Error ? err.message : String(err),
+    });
+    return null;
   }
 }
 
