@@ -53,6 +53,14 @@ function chapterAt(time: number): ChapterMarker | null {
   return found;
 }
 
+/** Bounding rect of an element, or null if it is hidden / zero-sized. */
+function visibleRect(el: Element | null): DOMRect | null {
+  if (!(el instanceof HTMLElement)) return null;
+  if (el.style.display === "none" || el.style.visibility === "hidden") return null;
+  const r = el.getBoundingClientRect();
+  return r.width > 0 && r.height > 0 ? r : null;
+}
+
 // ---------------------------------------------------------------------------
 // Hover tooltip (chapter title pill above YouTube's seek preview)
 // ---------------------------------------------------------------------------
@@ -64,10 +72,11 @@ function ensureHoverLabel(player: HTMLElement): HTMLElement {
     label = document.createElement("div");
     label.id = HOVER_LABEL_ID;
     label.style.cssText =
-      "position:absolute;z-index:75;pointer-events:none;display:none;" +
-      "background:rgba(28,28,28,0.95);color:#eee;font-size:12px;font-weight:500;" +
-      'font-family:"Roboto","Arial",sans-serif;padding:4px 8px;border-radius:4px;' +
-      "white-space:nowrap;max-width:320px;overflow:hidden;text-overflow:ellipsis;" +
+      "position:absolute;z-index:80;pointer-events:none;display:none;" +
+      "background:rgba(0,0,0,0.92);color:#fff;font-size:13px;font-weight:600;" +
+      'font-family:"Roboto","Arial",sans-serif;padding:5px 10px;border-radius:6px;' +
+      "border:1px solid rgba(255,255,255,0.25);box-shadow:0 2px 8px rgba(0,0,0,0.6);" +
+      "white-space:nowrap;max-width:360px;overflow:hidden;text-overflow:ellipsis;" +
       "transform:translate(-50%,-100%);";
     player.appendChild(label);
   }
@@ -100,19 +109,24 @@ function onBarMove(e: Event) {
   label.textContent = ch.title;
   label.style.display = "block";
 
-  // Ride above YouTube's seek tooltip (time + storyboard preview) when it is
-  // visible; otherwise fall back to hovering just above the bar at the cursor.
+  // Ride above YouTube's seek preview. The preview is composed of several
+  // elements (tooltip, storyboard thumb, fine-scrubbing "pull up" hint) whose
+  // boxes extend above .ytp-tooltip itself — anchor above the TOP-MOST visible
+  // one so the pill never overlaps YouTube's own text. Fall back to hovering
+  // just above the bar at the cursor when no preview is visible.
   const playerRect = player.getBoundingClientRect();
   let x = me.clientX - playerRect.left;
-  let y = barRect.top - playerRect.top - 12;
-  const tooltip = player.querySelector<HTMLElement>(".ytp-tooltip");
-  if (tooltip && tooltip.style.display !== "none") {
-    const tr = tooltip.getBoundingClientRect();
-    if (tr.width > 0 && tr.height > 0) {
-      x = tr.left + tr.width / 2 - playerRect.left;
-      y = tr.top - playerRect.top - 6;
-    }
+  let topMost = barRect.top;
+  const tooltip = visibleRect(player.querySelector(".ytp-tooltip"));
+  if (tooltip) {
+    x = tooltip.left + tooltip.width / 2 - playerRect.left;
+    topMost = Math.min(topMost, tooltip.top);
   }
+  for (const sel of [".ytp-tooltip-text-wrapper", ".ytp-fine-scrubbing"]) {
+    const r = visibleRect(player.querySelector(sel));
+    if (r) topMost = Math.min(topMost, r.top);
+  }
+  const y = topMost - playerRect.top - 10;
   // Keep the (center-anchored) pill inside the player horizontally
   const half = label.offsetWidth / 2;
   x = Math.min(playerRect.width - half - 4, Math.max(half + 4, x));

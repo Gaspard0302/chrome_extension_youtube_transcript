@@ -454,12 +454,62 @@ function findTranscriptButton(): HTMLElement | null {
   return null;
 }
 
-function closeTranscriptPanel() {
-  const closeBtn = document.querySelector<HTMLElement>(
-    'ytd-engagement-panel-section-list-renderer[target-id*="transcript"] #visibility-button button, ' +
-      'ytd-engagement-panel-section-list-renderer[target-id*="transcript"] button[aria-label*="Close" i]'
+const TRANSCRIPT_PANEL_SELECTOR =
+  'ytd-engagement-panel-section-list-renderer[target-id*="transcript"]';
+const HIDE_STYLE_ID = "ytta-hide-transcript-panel";
+
+function getTranscriptPanel(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(TRANSCRIPT_PANEL_SELECTOR);
+}
+
+function isTranscriptPanelOpen(): boolean {
+  return !!document.querySelector(
+    `${TRANSCRIPT_PANEL_SELECTOR}[visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"]`
   );
-  closeBtn?.click();
+}
+
+/**
+ * Move the native transcript panel fully off-screen while we drive it, so the
+ * user never sees it pop open. It stays rendered (real size, in the DOM) so
+ * YouTube still populates the segment rows — we just can't see it happen.
+ */
+function setTranscriptPanelHidden(hidden: boolean) {
+  const existing = document.getElementById(HIDE_STYLE_ID);
+  if (!hidden) {
+    existing?.remove();
+    return;
+  }
+  if (existing) return;
+  const style = document.createElement("style");
+  style.id = HIDE_STYLE_ID;
+  style.textContent = `${TRANSCRIPT_PANEL_SELECTOR}{position:fixed!important;top:0!important;left:-12000px!important;width:400px!important;height:800px!important;opacity:0!important;pointer-events:none!important;z-index:-1!important;}`;
+  document.head.appendChild(style);
+}
+
+/**
+ * Close the transcript engagement panel and confirm it actually closed,
+ * trying several mechanisms YouTube has used across versions.
+ */
+async function closeTranscriptPanel(): Promise<void> {
+  for (let attempt = 0; attempt < 4 && isTranscriptPanelOpen(); attempt++) {
+    const panel = getTranscriptPanel();
+    // The header's only button is the X (close); fall back to labelled buttons.
+    const closeBtn =
+      panel?.querySelector<HTMLElement>(
+        "ytd-engagement-panel-title-header-renderer #visibility-button button, " +
+          "ytd-engagement-panel-title-header-renderer button[aria-label]"
+      ) ??
+      panel?.querySelector<HTMLElement>(
+        'button[aria-label*="Close" i], tp-yt-paper-icon-button[aria-label*="Close" i]'
+      );
+    closeBtn?.click();
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  // Last resort: ask YouTube to hide it via its own action event.
+  if (isTranscriptPanelOpen()) {
+    const panel = getTranscriptPanel();
+    if (panel) panel.setAttribute("visibility", "ENGAGEMENT_PANEL_VISIBILITY_HIDDEN");
+  }
 }
 
 /**
@@ -467,57 +517,60 @@ function closeTranscriptPanel() {
  * the most robust path under POT/auth lockdown: YouTube fetches the transcript
  * with all its own tokens and renders it into the DOM; we just read it.
  *
- * Opens the panel if needed, reads the rendered segments, then restores the
- * prior panel state. Returns null if the panel/segments never appear.
+ * The panel is driven off-screen so the user never sees it, then restored to
+ * its prior open/closed state. Returns null if the panel never populates.
  */
 async function scrapeNativeTranscriptPanel(diag: FetchDiagnostics): Promise<TranscriptSegment[] | null> {
-  // Already open?
+  // Already open (user opened it themselves) — just read it, touch nothing.
   let existing = readRenderedTranscriptSegments();
   if (existing.length > 0) {
     diag.steps.push({ label: "Native transcript panel", status: "ok", detail: `${existing.length} segments (already open)` });
     return existing;
   }
 
-  const panelWasOpen = !!document.querySelector(
-    'ytd-engagement-panel-section-list-renderer[target-id*="transcript"][visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"]'
-  );
+  const panelWasOpen = isTranscriptPanelOpen();
+  if (!panelWasOpen) setTranscriptPanelHidden(true);
 
-  const btn = findTranscriptButton();
-  if (!btn) {
-    // Some layouts need the description expanded first to reveal the button.
-    document.querySelector<HTMLElement>("tp-yt-paper-button#expand, #expand")?.click();
-    const retryBtn = await waitFor(() => findTranscriptButton(), 1500);
-    if (!retryBtn) {
-      diag.steps.push({ label: "Native transcript panel", status: "warn", detail: "Transcript button not found in page" });
+  try {
+    const btn = findTranscriptButton();
+    if (!btn) {
+      // Some layouts need the description expanded first to reveal the button.
+      document.querySelector<HTMLElement>("tp-yt-paper-button#expand, #expand")?.click();
+      const retryBtn = await waitFor(() => findTranscriptButton(), 1500);
+      if (!retryBtn) {
+        diag.steps.push({ label: "Native transcript panel", status: "warn", detail: "Transcript button not found in page" });
+        return null;
+      }
+      retryBtn.click();
+    } else {
+      btn.click();
+    }
+
+    const ready = await waitFor(() => {
+      const segs = readRenderedTranscriptSegments();
+      return segs.length > 0 ? segs : null;
+    }, 6000);
+
+    if (!ready) {
+      diag.steps.push({ label: "Native transcript panel", status: "warn", detail: "Panel opened but no segments rendered in time" });
       return null;
     }
-    retryBtn.click();
-  } else {
-    btn.click();
-  }
 
-  const ready = await waitFor(() => {
-    const segs = readRenderedTranscriptSegments();
-    return segs.length > 0 ? segs : null;
-  }, 6000);
-
-  if (!ready) {
-    diag.steps.push({ label: "Native transcript panel", status: "warn", detail: "Panel opened but no segments rendered in time" });
-    return null;
-  }
-
-  existing = readRenderedTranscriptSegments();
-  diag.steps.push({ label: "Native transcript panel", status: "ok", detail: `${existing.length} segments scraped from DOM` });
-
-  // Restore prior state — leave the page as we found it.
-  if (!panelWasOpen) {
-    try {
-      closeTranscriptPanel();
-    } catch {
-      // non-fatal
+    existing = ready;
+    diag.steps.push({ label: "Native transcript panel", status: "ok", detail: `${existing.length} segments scraped from DOM` });
+    return existing;
+  } finally {
+    // Restore the page to how we found it: close the panel if we opened it,
+    // then drop the off-screen style.
+    if (!panelWasOpen) {
+      try {
+        await closeTranscriptPanel();
+      } catch {
+        // non-fatal
+      }
     }
+    setTranscriptPanelHidden(false);
   }
-  return existing;
 }
 
 // ---------------------------------------------------------------------------
