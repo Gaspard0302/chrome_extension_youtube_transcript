@@ -4,6 +4,11 @@ import { crx } from "@crxjs/vite-plugin";
 import manifest from "./manifest.json";
 
 export default defineConfig({
+  // Debug tab is included in normal builds (load-unpacked dev) and stripped
+  // only when YTTA_PROD=1 (the `npm run package` zip build for the store).
+  define: {
+    __SHOW_DEBUG__: JSON.stringify(process.env.YTTA_PROD !== "1"),
+  },
   plugins: [
     react(),
     crx({ manifest }),

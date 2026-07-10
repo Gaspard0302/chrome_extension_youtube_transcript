@@ -1,11 +1,10 @@
 {
   "manifest_version": 3,
   "name": "TranscriptAI for YouTube",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Search and chat with YouTube transcripts using AI",
   "permissions": [
     "storage",
-    "activeTab",
     "offscreen",
     "webRequest"
   ],

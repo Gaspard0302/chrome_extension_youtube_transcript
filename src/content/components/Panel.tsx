@@ -4,6 +4,7 @@ import {
   extractVideoId,
   fetchTranscript,
   chunkTranscript,
+  buildDisplaySegments,
   formatTimestamp,
   checkTranscriptAvailability,
   NoTranscriptError,
@@ -156,6 +157,9 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
   const [loadProgress, setLoadProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
   const [rawSegments, setRawSegments] = useState<TranscriptSegment[]>([]);
+  // Fine, sentence-level segments for the transcript display (one timestamp
+  // per sentence) — kept separate from the coarser embedding chunks above.
+  const [displaySegments, setDisplaySegments] = useState<TranscriptSegment[]>([]);
   const [embeddedSegments, setEmbeddedSegments] = useState<EmbeddedSegment[]>(
     []
   );
@@ -199,6 +203,7 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
       loadSeqRef.current++;
       setLoadState("idle");
       setRawSegments([]);
+      setDisplaySegments([]);
       setEmbeddedSegments([]);
       setErrorMsg("");
       setDebugInfo(null);
@@ -259,6 +264,7 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
       if (isStale()) return;
       const chunks = chunkTranscript(segments);
       setRawSegments(chunks);
+      setDisplaySegments(buildDisplaySegments(segments));
       setDebugInfo({ ...baseDebug, diagnostics, rawError: null, tracksLen, segmentsLen: segments.length, chunksLen: chunks.length });
       setLoadState("ready");
       setAvailability("available");
@@ -314,7 +320,8 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
   }
 
   function copyTranscript() {
-    const text = rawSegments
+    const source = displaySegments.length > 0 ? displaySegments : rawSegments;
+    const text = source
       .map((s) => `[${formatTimestamp(s.start)}] ${s.text}`)
       .join("\n");
     navigator.clipboard.writeText(text).then(() => {
@@ -329,7 +336,8 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
     { id: "transcript", label: "Transcript" },
     { id: "chat", label: "AI Chat" },
     { id: "timeline", label: "Timeline" },
-    { id: "debug", label: "🐛 Debug" },
+    // Debug tab is stripped from the production zip build (YTTA_PROD=1).
+    ...(__SHOW_DEBUG__ ? [{ id: "debug" as Tab, label: "🐛 Debug" }] : []),
   ];
 
   const embeddedOrRaw: EmbeddedSegment[] =
@@ -629,7 +637,8 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
           <>
             {tab === "transcript" && (
               <TranscriptTab
-                segments={embeddedOrRaw}
+                displaySegments={displaySegments}
+                searchSegments={embeddedOrRaw}
                 semanticEnabled={
                   settings.semanticSearchEnabled && embeddedSegments.length > 0
                 }
@@ -659,7 +668,7 @@ export default function Panel({ triggerContainer, panelContainer }: Props) {
           </>
         )}
 
-        {tab === "debug" && (
+        {__SHOW_DEBUG__ && tab === "debug" && (
           <DebugTab debugInfo={debugInfo} loadState={loadState} errorMsg={errorMsg} />
         )}
 

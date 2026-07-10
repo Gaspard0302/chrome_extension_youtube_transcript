@@ -1198,6 +1198,62 @@ export function chunkTranscript(
   return chunks;
 }
 
+/**
+ * Group raw caption lines into sentence-level display units, each keeping the
+ * timestamp of its first word. This is what the on-screen transcript renders —
+ * far finer than chunkTranscript (which targets embedding quality) so every
+ * sentence gets its own clickable timestamp, matching YouTube's own panel.
+ *
+ * A unit closes at the first of: a sentence end (./!/?/…), a clear speech
+ * pause once it has a few words, or the size caps (so auto-captions, which
+ * have no punctuation, still break into short readable lines).
+ */
+export function buildDisplaySegments(segments: TranscriptSegment[]): TranscriptSegment[] {
+  const maxWords = 22;
+  const maxDurationSec = 10;
+  const pauseGapSec = 1.0;
+  const minWordsForPauseBreak = 6;
+
+  const out: TranscriptSegment[] = [];
+  let parts: string[] = [];
+  let words = 0;
+  let start = 0;
+  let end = 0;
+
+  const flush = () => {
+    const text = parts.join(" ").replace(/\s+/g, " ").trim();
+    if (text) out.push({ text, start, duration: Math.max(end - start, 0) });
+    parts = [];
+    words = 0;
+  };
+
+  for (const seg of segments) {
+    const segWords = seg.text.split(/\s+/).filter(Boolean).length;
+
+    if (parts.length > 0) {
+      const gap = seg.start - end;
+      const sentenceEnded = /[.!?…]["')\]]?\s*$/.test(parts[parts.length - 1]);
+      const tooLong =
+        words + segWords > maxWords ||
+        seg.start + Math.max(seg.duration, 0) - start > maxDurationSec;
+      if (sentenceEnded || tooLong || (words >= minWordsForPauseBreak && gap >= pauseGapSec)) {
+        flush();
+      }
+    }
+
+    if (parts.length === 0) {
+      start = seg.start;
+      end = seg.start;
+    }
+    parts.push(seg.text);
+    words += segWords;
+    end = Math.max(end, seg.start + Math.max(seg.duration, 0));
+  }
+  flush();
+
+  return out;
+}
+
 export interface YouTubeChapter {
   title: string;
   startTime: number; // seconds

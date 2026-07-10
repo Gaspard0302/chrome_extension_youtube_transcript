@@ -1,24 +1,27 @@
 import React, { useRef, useEffect, useState, useCallback } from "react";
-import type { EmbeddedSegment } from "../../types";
+import type { EmbeddedSegment, TranscriptSegment } from "../../types";
 import { formatTimestamp } from "../../lib/transcript";
 import { exactSearch, hybridSearch, highlightText } from "../../lib/search";
 
 interface Props {
-  segments: EmbeddedSegment[];
+  /** Fine, sentence-level segments shown in the list (one timestamp each). */
+  displaySegments: TranscriptSegment[];
+  /** Coarser embedding chunks used as the search index. */
+  searchSegments: EmbeddedSegment[];
   semanticEnabled: boolean;
 }
 
-export default function TranscriptTab({ segments, semanticEnabled }: Props) {
+export default function TranscriptTab({ displaySegments, searchSegments, semanticEnabled }: Props) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<
-    { segment: EmbeddedSegment; highlighted: string; matchType: string }[] | null
+    { segment: TranscriptSegment; highlighted: string; matchType: string }[] | null
   >(null);
   const [searching, setSearching] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Sync active segment with video playback
+  // Sync active segment with video playback (over the fine display segments)
   useEffect(() => {
     const video = document.querySelector<HTMLVideoElement>("video");
     if (!video) return;
@@ -26,8 +29,8 @@ export default function TranscriptTab({ segments, semanticEnabled }: Props) {
     function onTimeUpdate() {
       const t = video!.currentTime;
       let best = 0;
-      for (let i = 0; i < segments.length; i++) {
-        if (segments[i].start <= t) best = i;
+      for (let i = 0; i < displaySegments.length; i++) {
+        if (displaySegments[i].start <= t) best = i;
         else break;
       }
       setActiveIndex(best);
@@ -35,7 +38,7 @@ export default function TranscriptTab({ segments, semanticEnabled }: Props) {
 
     video.addEventListener("timeupdate", onTimeUpdate);
     return () => video.removeEventListener("timeupdate", onTimeUpdate);
-  }, [segments]);
+  }, [displaySegments]);
 
   // Auto-scroll to active segment when not searching
   useEffect(() => {
@@ -73,19 +76,19 @@ export default function TranscriptTab({ segments, semanticEnabled }: Props) {
       setSearching(true);
       try {
         const results = semanticEnabled
-          ? await hybridSearch(q, segments)
-          : exactSearch(q, segments).map((r) => ({ ...r }));
+          ? await hybridSearch(q, searchSegments)
+          : exactSearch(q, searchSegments).map((r) => ({ ...r }));
 
         setSearchResults(
           results.map((r) => ({
-            segment: r.segment as EmbeddedSegment,
+            segment: r.segment as TranscriptSegment,
             highlighted: highlightText(r.segment.text, q),
             matchType: r.matchType,
           }))
         );
       } catch {
-        const fallback = exactSearch(q, segments).map((r) => ({
-          segment: r.segment as EmbeddedSegment,
+        const fallback = exactSearch(q, searchSegments).map((r) => ({
+          segment: r.segment as TranscriptSegment,
           highlighted: highlightText(r.segment.text, q),
           matchType: r.matchType,
         }));
@@ -94,7 +97,7 @@ export default function TranscriptTab({ segments, semanticEnabled }: Props) {
         setSearching(false);
       }
     },
-    [segments, semanticEnabled]
+    [searchSegments, semanticEnabled]
   );
 
   function handleSearchInput(e: React.ChangeEvent<HTMLInputElement>) {
@@ -128,10 +131,10 @@ export default function TranscriptTab({ segments, semanticEnabled }: Props) {
     }
   }
 
-  const displayItems =
+  const displayItems: { segment: TranscriptSegment; highlighted: string; matchType: string }[] =
     searchResults !== null
       ? searchResults
-      : segments.map((seg) => ({
+      : displaySegments.map((seg) => ({
           segment: seg,
           highlighted: "",
           matchType: "",
@@ -295,13 +298,16 @@ export default function TranscriptTab({ segments, semanticEnabled }: Props) {
           </div>
         )}
 
-        {displayItems.map(({ segment, highlighted, matchType }) => {
-          const isActive = !query && activeIndex === segment.index;
+        {displayItems.map(({ segment, highlighted, matchType }, i) => {
+          // In the normal (non-search) view the list is the fine display
+          // segments and `i` is the active-playback index. In search view the
+          // list is chunk results and nothing is highlighted as active.
+          const isActive = !query && activeIndex === i;
 
           return (
             <div
-              key={segment.index}
-              data-index={segment.index}
+              key={`${i}-${segment.start}`}
+              data-index={i}
               onClick={() => jumpTo(segment.start)}
               style={{
                 padding: "8px 12px",

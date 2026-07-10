@@ -1,12 +1,13 @@
 {
   "name": "youtube-transcript-search",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "package": "rm -rf dist && YTTA_PROD=1 vite build && cd dist && zip -qr \"../youtube-transcript-search-$npm_package_version.zip\" . -x '.vite/*' && cd .. && echo \"Created youtube-transcript-search-$npm_package_version.zip (Debug tab stripped)\""
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.0.0",
